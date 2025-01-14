@@ -1,2 +1,2 @@
-# CLIP-DINO
-Repository for using CLIP and DINO for making better embeddings that can be used for image generation.
+# PRISM
+Repository for PRISM - Prompt Responsive Image Synthesis Model.
