@@ -28,7 +28,7 @@ class compute_area(object):
         portion, segs = find_area(self.main_df.iloc[:self.k], self.img_shp)
         self.segs = segs
         return portion
-    
+        
     def get_segs(self, type_df, img_rgb):
         nouns = []
         seg_img = []

@@ -1,7 +1,8 @@
 import numpy as np
 import torch
 from PIL import Image
-from clip_embeds import make_embeds
+from dassl.clip import clip
+from dassl.coop import load_clip_to_cpu_name
 from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
 try:
     from torchvision.transforms import InterpolationMode
@@ -24,9 +25,22 @@ def load_img(img_rgb):
     img_res = torch.reshape(img_enc,(1,3,224,224))
     return img_res
 
+class clip_embeds(object):
+    def __init__(self, backname="ViT-B/16"):
+        super(clip_embeds, self).__init__()
+        self.device = "cuda"
+        clip_model = load_clip_to_cpu_name(backname)
+        clip_model.to(self.device)
+        self.clip_model = clip_model
+    
+    def forward_img(self, image):
+        image_features = self.clip_model.encode_image(image)
+        image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+        return image_features.cpu().detach().numpy()
+
 class retrieve_img(object):
     def __init__(self, img_rgb):
-        self.img_query = make_embeds().forward_img(load_img(img_rgb))
+        self.img_query = clip_embeds().forward_img(load_img(img_rgb))
         self.device = "cuda"
         Xr = np.load("/data/aditya/coco_embeds/coco_img_feat_0.npy")
         self.Xr = Xr/np.linalg.norm(Xr, axis=-1, keepdims=True)
