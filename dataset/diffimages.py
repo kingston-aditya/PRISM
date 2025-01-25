@@ -10,7 +10,7 @@ class run_sd21(object):
     
     def forward(self, prt):
         img = self.pipe(prt).images[0]
-        img.save("/data/aditya/generated_image.png")
+        return img
 
 class run_sdxl(object):
     def __init__(self):

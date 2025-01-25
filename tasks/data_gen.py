@@ -3,19 +3,26 @@ import numpy as np
 import pandas as pd
 import os
 import cv2
+import json
+
+# warnings
 import warnings
 warnings.filterwarnings("ignore")
+
+# in file modules
 import sys
 sys.path.insert(0, "/data/aditya/PRISM/")
-from dataset.openimages import openimages
-from utils.retrieval import retrieve_img
+from utils import run_gd, run_llm, utilities
+from dataset.diffimages import run_sd21
+# from dataset.openimages import openimages
+# from utils.run_clip import retrieve_img
 
-class new_algorithms(object):
+class pipeline4(object):
     def __init__(self, dir_pth, csv_pth):
         self.dir_pth = dir_pth
         self.csv_pth = csv_pth
     
-    def pipeline1(self):
+    def forward(self):
         k=0
         for i in os.listdir(self.dir_pth):
             img_pth = os.path.join(self.dir_pth, i)
@@ -38,14 +45,41 @@ class new_algorithms(object):
                 k+=1
                 print("Done",k)
                 return obj1
-               
-    
-    def pipeline2(self):
-        
-        
-    
 
+class pipeline5(object):
+    def __init__(self, json_pth):
+        f = open(json_pth, "r")
+        self.json_obj = json.load(f)
+        self.llm_obj = run_llm.run_phi3()
+        self.diff_obj = run_sd21()
+        self.GD = run_gd.GDINO()
+
+    def forward(self):
+        for i in range(10):
+            torch.cuda.empty_cache()
+            prt = self.json_obj[i]["conversations"][1]['value'].split("\n\n")[0]
+            if len(prt.split(" ")) < 12:
+                continue
+            else:
+                txt = self.llm_obj.forward(prt.replace("image",""))
+                sum_prt = "An image of" + txt.split("\n")[0][9:]
+                nouns = txt.split("\n")[1].split(" ")[3:6]
+                img_gen = run_sd21().forward(sum_prt)
+                out = self.GD.predict([img_gen]*3, nouns, 0.3, 0.25,)
+                for j in out:
+                    temp = j['boxes'].cpu().numpy().tolist()[0]
+                    out_img = utilities.visualize(img_gen, {"xmin": int(temp[0]), "ymin": int(temp[1]), "xmax": int(temp[2]), "ymax": int(temp[3])})
+                    os.makedirs(os.path.join("/data/aditya/visuals1/",str(i)), exist_ok =True)
+                    out_img.save(os.path.join(os.path.join("/data/aditya/visuals1/",str(i)),"output_image_"+j["labels"][0]+".png"))
+                    
 if __name__ == "__main__":
-    dir_pth = "/data/datasets/openimages/images/" 
-    csv_pth = "/data/datasets/openimages/small_op_annotations.csv"
-    new_algorithms(dir_pth, csv_pth).pipeline1()
+    # for pipeline 4
+    # dir_pth = "/data/datasets/openimages/images/" 
+    # csv_pth = "/data/datasets/openimages/small_op_annotations.csv"
+    # new_algorithms(dir_pth, csv_pth).pipeline4()
+
+    # for pipeline 5
+    json_pth = "/data/datasets/ShareGPT4V/sharegpt4v_instruct_gpt4-vision_cap100k.json"
+    pipeline5(json_pth).forward()
+
+

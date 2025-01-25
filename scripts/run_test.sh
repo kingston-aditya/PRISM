@@ -1,3 +1,3 @@
-pip install diffusers transformers torch
-cd /data/aditya/PRISM/dataset/
-python diffimages.py
+pip install diffusers transformers
+cd /data/aditya/PRISM/tasks/
+python data_gen.py
