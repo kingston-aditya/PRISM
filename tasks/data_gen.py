@@ -4,6 +4,7 @@ import pandas as pd
 import os
 import cv2
 import json
+from PIL import Image
 
 # warnings
 import warnings
@@ -50,28 +51,51 @@ class pipeline5(object):
     def __init__(self, json_pth):
         f = open(json_pth, "r")
         self.json_obj = json.load(f)
-        self.llm_obj = run_llm.run_phi3()
-        self.diff_obj = run_sd21()
-        self.GD = run_gd.GDINO()
+        # self.GD = run_gd.GDINO()
 
     def forward(self):
-        for i in range(10):
+        cn = {}
+        for i in range(25):
             torch.cuda.empty_cache()
             prt = self.json_obj[i]["conversations"][1]['value'].split("\n\n")[0]
             if len(prt.split(" ")) < 12:
                 continue
             else:
+                self.llm_obj = run_llm.run_phi3()
                 txt = self.llm_obj.forward(prt.replace("image",""))
                 sum_prt = "An image of" + txt.split("\n")[0][9:]
                 nouns = txt.split("\n")[1].split(" ")[3:6]
-                img_gen = run_sd21().forward(sum_prt)
-                out = self.GD.predict([img_gen]*3, nouns, 0.3, 0.25,)
-                for j in out:
+                del self.llm_obj
+                self.diff_obj = run_sd21()
+
+                # save an image
+                img_gen = self.diff_obj.forward(sum_prt)
+                img_gen.save(os.path.join("/data/aditya/visuals1/","output_image_"+str(i)+".png"))
+
+                # write a caption
+                f = open(os.path.join("/data/aditya/visuals1/","output_image_"+str(i)+".txt"), "w")
+                f.write(sum_prt)
+                f.close()
+
+                del self.diff_obj
+                cn["output_image_"+str(i)+".png"] = nouns
+        torch.cuda.empty_cache()
+
+        self.GD = run_gd.GDINO()
+        k = 0
+        for i in list(cn.keys()):
+            img_gen = Image.open(os.path.join("/data/aditya/visuals1/",i))
+            out = self.GD.predict([img_gen]*3, cn[i], 0.3, 0.25,)
+            k+=1
+            for j in out:
+                if len(j['boxes'].cpu().numpy().tolist()) == 0:
+                    continue
+                else:
                     temp = j['boxes'].cpu().numpy().tolist()[0]
                     out_img = utilities.visualize(img_gen, {"xmin": int(temp[0]), "ymin": int(temp[1]), "xmax": int(temp[2]), "ymax": int(temp[3])})
-                    os.makedirs(os.path.join("/data/aditya/visuals1/",str(i)), exist_ok =True)
-                    out_img.save(os.path.join(os.path.join("/data/aditya/visuals1/",str(i)),"output_image_"+j["labels"][0]+".png"))
-                    
+                    os.makedirs(os.path.join("/data/aditya/visuals1/",str(k)), exist_ok =True)
+                    out_img.save(os.path.join(os.path.join("/data/aditya/visuals1/",str(k)),"output_image_"+j["labels"][0]+".png"))
+
 if __name__ == "__main__":
     # for pipeline 4
     # dir_pth = "/data/datasets/openimages/images/" 
