@@ -55,7 +55,7 @@ class pipeline5(object):
 
     def forward(self):
         cn = {}
-        for i in range(25):
+        for i in range(20):
             torch.cuda.empty_cache()
             prt = self.json_obj[i]["conversations"][1]['value'].split("\n\n")[0]
             if len(prt.split(" ")) < 12:
@@ -64,7 +64,8 @@ class pipeline5(object):
                 self.llm_obj = run_llm.run_phi3()
                 txt = self.llm_obj.forward(prt.replace("image",""))
                 sum_prt = "An image of" + txt.split("\n")[0][9:]
-                nouns = txt.split("\n")[1].split(" ")[3:6]
+                nouns = txt.split("\n")[1].split(" ")[3:]
+                print("NOUNS", nouns)
                 del self.llm_obj
                 self.diff_obj = run_sd21()
 
@@ -83,18 +84,19 @@ class pipeline5(object):
 
         self.GD = run_gd.GDINO()
         k = 0
+        # [list(cn.keys())]
         for i in list(cn.keys()):
+            print("Done", k)
             img_gen = Image.open(os.path.join("/data/aditya/visuals1/",i))
-            out = self.GD.predict([img_gen]*3, cn[i], 0.3, 0.25,)
+            out = self.GD.predict([img_gen]*len(cn[i]), cn[i], 0.3, 0.25,)
+            # print(out)
+            out1 = [{"labels": i["labels"][0], "boxes":i['boxes'].cpu().numpy().tolist()[0]} for i in out if len(i['boxes'].cpu().numpy().tolist()[0]) != 0]
+            out_fil = utilities.find_important(out1, img_gen.size)
+            for j in out_fil:
+                out_img = utilities.visualize(img_gen, j)
+                os.makedirs(os.path.join("/data/aditya/visuals1/",str(k)), exist_ok =True)
+                out_img.save(os.path.join(os.path.join("/data/aditya/visuals1/",str(k)),"output_image_"+j["labels"]+".png"))
             k+=1
-            for j in out:
-                if len(j['boxes'].cpu().numpy().tolist()) == 0:
-                    continue
-                else:
-                    temp = j['boxes'].cpu().numpy().tolist()[0]
-                    out_img = utilities.visualize(img_gen, {"xmin": int(temp[0]), "ymin": int(temp[1]), "xmax": int(temp[2]), "ymax": int(temp[3])})
-                    os.makedirs(os.path.join("/data/aditya/visuals1/",str(k)), exist_ok =True)
-                    out_img.save(os.path.join(os.path.join("/data/aditya/visuals1/",str(k)),"output_image_"+j["labels"][0]+".png"))
 
 if __name__ == "__main__":
     # for pipeline 4
