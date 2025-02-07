@@ -13,8 +13,9 @@ warnings.filterwarnings("ignore")
 # in file modules
 import sys
 sys.path.insert(0, "/data/aditya/PRISM/")
-from utils import run_gd, run_llm, utilities
-from dataset.diffimages import run_sd21
+from utils import run_gd, run_llm, utilities, run_mllm
+# from dataset.diffimages import run_sd21
+from dataset.realimages import CC3m_data
 # from dataset.openimages import openimages
 # from utils.run_clip import retrieve_img
 
@@ -97,6 +98,46 @@ class pipeline5(object):
                 os.makedirs(os.path.join("/data/aditya/visuals1/",str(k)), exist_ok =True)
                 out_img.save(os.path.join(os.path.join("/data/aditya/visuals1/",str(k)),"output_image_"+j["labels"]+".png"))
             k+=1
+
+class pipeline7(object):
+    def __init__(self):
+        self.d = CC3m_data().forward()
+        self.qwen_model = run_mllm.run_quen2_vl()
+        self.GD = run_gd.GDINO()
+
+    def forward(self):
+        for i in list(self.d.keys()):
+            img_pth = os.path.join("/fs/nexus-datasets/ConceptualCaptions/training_data_CC3M/images/", i)
+            # get dense captions
+            messg = get_messages(typ = 0, img_pth = img_pth)
+            caps = self.qwen_model.forward(messg)
+
+            # get summarized captions
+            messg = get_messages(typ = 1, message = caps[0])
+            s_caps = self.qwen_model.forward(messg)
+
+            # get summarized captions
+            messg = get_messages(typ = 2, message = s_caps[0])
+            nouns = self.qwen_model.forward(messg)
+            nouns = nouns[0].split(",")
+
+            # get the bounding boxes
+            k = 0
+            # [list(cn.keys())]
+            for i in nouns:
+                print("Done", k)
+                img_gen = Image.open(os.path.join("/data/aditya/visuals1/",i))
+                out = self.GD.predict([img_gen]*len(cn[i]), cn[i], 0.3, 0.25,)
+                # print(out)
+                out1 = [{"labels": i["labels"][0], "boxes":i['boxes'].cpu().numpy().tolist()[0]} for i in out if len(i['boxes'].cpu().numpy().tolist()[0]) != 0]
+                out_fil = utilities.find_important(out1, img_gen.size)
+                for j in out_fil:
+                    out_img = utilities.visualize(img_gen, j)
+                    os.makedirs(os.path.join("/data/aditya/visuals1/",str(k)), exist_ok =True)
+                    out_img.save(os.path.join(os.path.join("/data/aditya/visuals1/",str(k)),"output_image_"+j["labels"]+".png"))
+                k+=1
+
+
 
 if __name__ == "__main__":
     # for pipeline 4
