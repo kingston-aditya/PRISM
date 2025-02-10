@@ -1,7 +1,7 @@
 import torch 
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
-def make_summary(prt):
+def make_summary_phi3(prt):
     cont1_q = "Question - Summarize the text to a maximum of 12 words and output the nouns in the Answer: Artificial intelligence is rapidly changing many industries, providing new opportunities, challenges, and innovations. It's transforming the way we work, live, and interact."
     cont1_a = "Answer - Artificial intelligence is changing industries, providing opportunities, transforming work and interaction. \n Nouns - intelligence, industries, opportunities, work, interaction."
     cont2_q = "Question - Summarize the text to a maximum of 12 words and output the nouns in the Answer: Quantum computing represents a new frontier in computing technology, offering solutions to complex problems that traditional computers struggle with, such as cryptography and optimization."
@@ -19,6 +19,21 @@ def make_summary(prt):
     messages.append({"role": "user", "content": "Question - Summarize the text to a maximum of 12 words and output the nouns in the Answer:" + prt})
     return messages
 
+def make_summary_qwen(prt,typ):
+    if typ == 0:
+        cont1_q = "Question - Summarize the text to a maximum of 30 words. It should contain as many objects as possible from the input prompt." + "\n\n Prompt -" + prt + "\n\n Summary -"
+        mssg = [{"role":"system", "content":"You are Qwen, created by Alibaba Cloud. You are a helpful assistant."},{"role":"user","content":cont1_q}]
+    else:
+        cont2_q = "An image is generated using the input prompt. Output objects that can be present in the generated image and there is no overlap between the bounding boxes on those objects. Objects should be from the input prompt and must be described in less than 4 words. Abstract nouns should NOT be given as output."
+        cont2_s = "Here are two examples."
+        cont3_q = "Prompt - An dog is playing with a cat in a lush green mountainous background. \n\n Answer - dog, cat \n\n Explanation - It is easy to make bounding boxes on dog and cat, but it's not possible to make it on a background."
+        cont4_q = "Prompt - Horses and Zebras are standing in a green grass and expressing sadness with activity. \n\n Answer - horses, zebras \n\n Explanation - It is easy to make bounding boxes on horses and zebra, but it's not possible to make it on a background. Also Sadness and activity are abstract nouns, hence not considered."
+        cont5_q = "Prompt - A cat is going towards a light pole which is on a park. \n\n Answer - cat, light pole \n\n Explanation - cat and light pole are objects. Park is not given as output because the bounding box on park might cover the whole image and that is not desirable."
+        cont6_q = "Do NOT output explanatin. Prompt - " + prt + "\n\n Answer - "
+        mssg = [{"role":"system", "content":"You are Qwen, created by Alibaba Cloud. You are a helpful assistant."},{"role":"user","content":cont2_q},{"role":"user","content":cont2_s},
+                {"role":"user","content":cont3_q}, {"role":"user","content":cont4_q}, {"role":"user","content":cont5_q},{"role":"user","content":cont6_q}]
+    return mssg
+
 class run_phi3(object):
     def __init__(self):
         self.device = "cuda"
@@ -28,10 +43,35 @@ class run_phi3(object):
     def forward(self, prt):
         pipe = pipeline("text-generation", model=self.model, tokenizer=self.tokenizer)
         gen_args = {"max_new_tokens": 500, "return_full_text": False, "temperature": 0.0, "do_sample": False, }
-        output = pipe(make_summary(prt), **gen_args)
+        output = pipe(make_summary_phi3(prt), **gen_args)
         return output[0]['generated_text']
 
+class run_qwen(object):
+    def __init__(self):
+        self.device = "cpu"
+        self.model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2.5-72B-Instruct", device_map=self.device, cache_dir = "/nfshomes/asarkar6/trinity/model_weights/", torch_dtype=torch.float16)
+        self.tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-72B-Instruct", cache_dir = "/nfshomes/asarkar6/trinity/model_weights/")
+    
+    def forward(self, prt):
+        # get summary
+        txt1 = self.tokenizer.apply_chat_template(make_summary_qwen(prt,0), tokenize=False, add_generation_prompt=True)
+        model_inputs = self.tokenizer([txt1], return_tensors="pt").to(self.device)
+        generated_ids = self.model.generate(**model_inputs, max_new_tokens=512)
+        generated_ids = [output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)]
+        response1 = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+
+        # get nouns
+        txt2 = self.tokenizer.apply_chat_template(make_summary_qwen(response1, 1), tokenize=False, add_generation_prompt=True)
+        model_inputs = self.tokenizer([txt2], return_tensors="pt").to(self.device)
+        generated_ids = self.model.generate(**model_inputs, max_new_tokens=512)
+        generated_ids = [output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)]
+        response2 = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+
+        return response1, response2
+
 if __name__ == "__main__":
-    prt = "The global economy is facing significant challenges as inflation rates rise, unemployment increases, and markets remain volatile. Governments and central banks are taking action to stabilize the economy, but recovery is expected to take time."
-    llm_obj = run_phi3()
-    print(llm_obj.forward(prt))
+    prt = "A serene lake at sunset, surrounded by towering, snow-capped mountains. The water reflects the orange and pink sky, while a small wooden boat drifts gently. Pine trees line the shore, their dark green needles contrasting with the warm hues of the evening. The air feels calm and crisp."
+    llm_obj = run_qwen()
+    r1, r2 = llm_obj.forward(prt)
+    print("1", r1)
+    print("2", r2)

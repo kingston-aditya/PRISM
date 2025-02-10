@@ -1,7 +1,6 @@
 import numpy as np
 import cv2
 from PIL import Image
-import pandas as pd
 
 def visualize(img, annot):
     img_cv2 = np.array(img)
@@ -12,38 +11,43 @@ def visualize(img, annot):
     img_cv2 = cv2.cvtColor(img_cv2, cv2.COLOR_BGR2RGB)
     return Image.fromarray(img_cv2)
 
-def find_area(df, img_shp):
-    segs = []
-    for i in range(df.shape[0]):
-        mask = np.ones((img_shp[0], img_shp[1]))
-        mask[int(df.iloc[i]['YMin']*img_shp[0]):int(df.iloc[i]['YMax']*img_shp[0]), int(df.iloc[i]['XMin']*img_shp[1]):int(df.iloc[i]['XMax']*img_shp[1])] = 0
-        segs.append(1.0-mask)
-    return np.sum(1.0-mask)/(img_shp[0]*img_shp[1]), segs
+def calculate_iou(box1, box2, img_shape):
+    mask1 = np.zeros(img_shape, dtype=np.uint8)
+    mask2 = np.zeros(img_shape, dtype=np.uint8)
+    mask1[box1["ymin"]:box1["ymax"], box1["xmin"]:box1["xmax"]] = 1
+    mask2[box2["ymin"]:box2["ymax"], box2["xmin"]:box2["xmax"]] = 1
+    intersect = np.sum(np.logical_and(mask1, mask2))
+    union = np.sum(np.logical_or(mask1, mask2))
+    if union == 0:
+        return 0
+    else:
+        return intersect/union
 
-class compute_area(object):
-    def __init__(self, img_rgb_shp, img_id, csv_pth):
-        df = pd.read_csv(csv_pth)
-        self.main_df = df[df['ImageID'] == img_id]
-        temp = []
-        for i in range(self.main_df.shape[0]):
-            temp.append(int((self.main_df.iloc[i]['XMax'] - self.main_df.iloc[i]['XMin'])*(self.main_df.iloc[i]['YMax'] - self.main_df.iloc[i]['YMin'])*img_rgb_shp[0]*img_rgb_shp[1]))
-        self.main_df["area"] = temp
-        self.main_df = self.main_df.sort_values(by="area", ascending=False)
-        self.img_shp = img_rgb_shp
-    
-    def check(self):
-        if self.main_df.shape[0] < 2:
-            return None
-        else:
-            self.k = min(self.main_df.shape[0], 3)
-        portion, segs = find_area(self.main_df.iloc[:self.k], self.img_shp)
-        self.segs = segs
-        return portion
-        
-    def get_segs(self, type_df, img_rgb):
-        nouns = []
-        seg_img = []
-        for i in range(self.k):
-            nouns.append(type_df[type_df['LabelName']==self.main_df.iloc[i]['LabelName']].iloc[0]['DisplayName'])
-            seg_img.append(img_rgb[int(self.main_df.iloc[i]['YMin']*self.img_shp[0]):int(self.main_df.iloc[i]['YMax']*self.img_shp[0]), int(self.main_df.iloc[i]['XMin']*self.img_shp[1]):int(self.main_df.iloc[i]['XMax']*self.img_shp[1]),:])
-        return seg_img, nouns
+def find_important(out, img_shape):
+    min_overlap = float('inf')
+    best_triplet = None
+
+    n = len(out)
+
+    # Iterate over all possible triplets
+    for i in range(n):
+        for j in range(i + 1, n):
+            for k in range(j + 1, n):
+                box1 = {"xmin":int(out[i]["boxes"][0]),"xmax":int(out[i]["boxes"][2]), "ymin":int(out[i]["boxes"][1]), "ymax": int(out[i]["boxes"][3]), "labels":out[i]["labels"]}
+                box2 = {"xmin":int(out[j]["boxes"][0]),"xmax":int(out[j]["boxes"][2]), "ymin":int(out[j]["boxes"][1]), "ymax": int(out[j]["boxes"][3]), "labels":out[j]["labels"]}
+                box3 = {"xmin":int(out[k]["boxes"][0]),"xmax":int(out[k]["boxes"][2]), "ymin":int(out[k]["boxes"][1]), "ymax": int(out[k]["boxes"][3]), "labels":out[k]["labels"]}
+
+                # Calculate pairwise IoUs
+                iou12 = calculate_iou(box1, box2, img_shape)
+                iou13 = calculate_iou(box1, box3, img_shape)
+                iou23 = calculate_iou(box2, box3, img_shape)
+
+                # Calculate the sum of IoUs for the triplet
+                overlap_sum = (iou12 + iou13 + iou23)/3
+
+                # Check if this triplet has the minimum overlap
+                if overlap_sum < min_overlap:
+                    min_overlap = overlap_sum
+                    best_triplet = [box1, box2, box3]
+
+    return best_triplet
