@@ -10,9 +10,9 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import sys
-sys.path.insert(0, "/data/aditya/PRISM/")
+sys.path.insert(0, "/nfshomes/asarkar6/PRISM/")
 from utils import run_gd, run_llm, utilities, run_mllm
-from dataset.diffimages import run_flux
+from dataset.diffimages import run_sdxl
 from dataset.realimages import CC3m_data
 # from dataset.openimages import openimages
 # from utils.run_clip import retrieve_img
@@ -50,16 +50,19 @@ class pipeline6(object):
     def __init__(self, json_pth):
         f = open(json_pth, "r")
         self.json_obj = json.load(f)
+        f.close()
 
     def forward(self):
+        f1 = open("/nfshomes/asarkar6/PRISM/output.txt","w")
         # task 1 - get the nouns and captions
         cn = []
         self.llm_obj = run_llm.run_qwen()
         for i in range(len(self.json_obj)):
+            f1.write("TS"+"\t"+str(i))
             torch.cuda.empty_cache()
             prt = self.json_obj[i]["conversations"][1]['value'].split("\n\n")[0]
             caps, nouns = self.llm_obj.forward(prt.replace("image",""))
-            nouns = nouns.split("\n")[1].split(" ")
+            nouns = nouns.split(" ")
             cn.append({"nouns":nouns, "caps":caps})
         del self.llm_obj
         torch.cuda.empty_cache()
@@ -67,10 +70,11 @@ class pipeline6(object):
             json.dump(cn, final)
 
         # task 2 - get the images
-        self.diff_obj = run_flux()
+        self.diff_obj = run_sdxl()
         f = open("/nfshomes/asarkar6/trinity/trinity-data.json", "r")
         json_obj = json.load(f)
         for i in range(len(json_obj)):
+            f1.write("IG"+"\t"+str(i))
             torch.cuda.empty_cache()
             sum_prt = "An image of " + json_obj[i]['caps']
             img_gen = self.diff_obj.forward(sum_prt)
@@ -82,15 +86,22 @@ class pipeline6(object):
         # task 3 - get the objects
         self.GD = run_gd.GDINO()
         for i in range(len(json_obj)):
+            f1.write("BB"+"\t"+str(i))
             torch.cuda.empty_cache()
             img_gen = Image.open(os.path.join("/nfshomes/asarkar6/trinity/trinity-images/",str(i)+".png"))
             out = []
-            for j in range(json_obj[i]["nouns"]):
-                out.append(self.GD.predict(img_gen, json_obj[i]["nouns"][j], 0.3, 0.25,))
-            out1 = [{"labels": i["labels"][0], "boxes":i['boxes'].cpu().numpy().tolist()[0]} for i in out if len(i['boxes'].cpu().numpy().tolist()[0]) != 0]
+            for j in range(len(json_obj[i]["nouns"])):
+                out.append(self.GD.predict([img_gen], [json_obj[i]["nouns"][j]], 0.3, 0.25,))
+            out1 = []
+            for k in out:
+                if len(k[0]['boxes'].cpu().numpy().tolist()) != 0:
+                    out1.append({"labels": k[0]['text_labels'][0], "boxes": k[0]['boxes'].cpu().numpy().tolist()[0]})
             out_fil = utilities.find_important(out1, img_gen.size)
             json_obj[i]['bbox'] = out_fil
+        with open("/nfshomes/asarkar6/trinity/trinity-data.json", "w") as final:
+            json.dump(json_obj, final)
         torch.cuda.empty_cache()
+        f1.close()
 
 class pipeline7(object):
     def __init__(self):

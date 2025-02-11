@@ -1,0 +1,7 @@
+
+CondaError: Run 'conda init' before 'conda activate'
+
+Traceback (most recent call last):
+  File "/nfshomes/asarkar6/PRISM/tasks/data_gen.py", line 1, in <module>
+    import torch
+ModuleNotFoundError: No module named 'torch'

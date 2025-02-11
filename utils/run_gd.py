@@ -11,8 +11,8 @@ class GDINO:
     def __init__(self, ckpt_path: str | None = None):
         model_id = "IDEA-Research/grounding-dino-base"
         self.device = "cuda"
-        self.processor = AutoProcessor.from_pretrained(model_id)
-        self.model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id).to(self.device)
+        self.processor = AutoProcessor.from_pretrained(model_id, cache_dir = "/nfshomes/asarkar6/trinity/model_weights/")
+        self.model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id, cache_dir = "/nfshomes/asarkar6/trinity/model_weights/").to(self.device)
 
     def predict(
         self,

@@ -24,11 +24,11 @@ def make_summary_qwen(prt,typ):
         cont1_q = "Question - Summarize the text to a maximum of 30 words. It should contain as many objects as possible from the input prompt." + "\n\n Prompt -" + prt + "\n\n Summary -"
         mssg = [{"role":"system", "content":"You are Qwen, created by Alibaba Cloud. You are a helpful assistant."},{"role":"user","content":cont1_q}]
     else:
-        cont2_q = "An image is generated using the input prompt. Output objects that can be present in the generated image and there is no overlap between the bounding boxes on those objects. Objects should be from the input prompt and must be described in less than 4 words. Abstract nouns should NOT be given as output."
+        cont2_q = "An image is generated using the input prompt. Output objects that can be present in the generated image and there is no overlap between the bounding boxes on those objects. Objects and their adjectives should be from the input prompt and must be in less than 4 words. Abstract nouns should NOT be given as output."
         cont2_s = "Here are two examples."
-        cont3_q = "Prompt - An dog is playing with a cat in a lush green mountainous background. \n\n Answer - dog, cat \n\n Explanation - It is easy to make bounding boxes on dog and cat, but it's not possible to make it on a background."
-        cont4_q = "Prompt - Horses and Zebras are standing in a green grass and expressing sadness with activity. \n\n Answer - horses, zebras \n\n Explanation - It is easy to make bounding boxes on horses and zebra, but it's not possible to make it on a background. Also Sadness and activity are abstract nouns, hence not considered."
-        cont5_q = "Prompt - A cat is going towards a light pole which is on a park. \n\n Answer - cat, light pole \n\n Explanation - cat and light pole are objects. Park is not given as output because the bounding box on park might cover the whole image and that is not desirable."
+        cont3_q = "Prompt - An brown dog is playing with a black cat in a lush green mountainous background. \n\n Answer - brown dog, black cat \n\n Explanation - It is easy to make bounding boxes on dog and cat, but it's not possible to make it on a background."
+        cont4_q = "Prompt - Happy horses and sad zebras are standing in a green grass and expressing sadness with activity. \n\n Answer - horses, zebras \n\n Explanation - It is easy to make bounding boxes on horses and zebra, but it's not possible to make it on a background. Also Sadness, sad and happy and activity are abstract nouns, hence not considered."
+        cont5_q = "Prompt - A green cat is going towards a blue light pole which is on a park. \n\n Answer - green cat, blue light pole \n\n Explanation - cat and light pole are objects. Park is not given as output because the bounding box on park might cover the whole image and that is not desirable."
         cont6_q = "Do NOT output explanatin. Prompt - " + prt + "\n\n Answer - "
         mssg = [{"role":"system", "content":"You are Qwen, created by Alibaba Cloud. You are a helpful assistant."},{"role":"user","content":cont2_q},{"role":"user","content":cont2_s},
                 {"role":"user","content":cont3_q}, {"role":"user","content":cont4_q}, {"role":"user","content":cont5_q},{"role":"user","content":cont6_q}]
@@ -49,8 +49,8 @@ class run_phi3(object):
 class run_qwen(object):
     def __init__(self):
         self.device = "cuda"
-        self.model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2.5-14B-Instruct", device_map=self.device, cache_dir = "/nfshomes/asarkar6/trinity/model_weights/", torch_dtype=torch.float16)
-        self.tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-14B-Instruct", cache_dir = "/nfshomes/asarkar6/trinity/model_weights/")
+        self.model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2.5-7B-Instruct", device_map=self.device, cache_dir = "/nfshomes/asarkar6/trinity/model_weights/", torch_dtype=torch.float16)
+        self.tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct", cache_dir = "/nfshomes/asarkar6/trinity/model_weights/")
     
     def forward(self, prt):
         # get summary
