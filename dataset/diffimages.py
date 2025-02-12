@@ -19,10 +19,10 @@ class run_sdxl(object):
     def __init__(self):
         self.device = "cuda"
         # define base
-        self.base = DiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-xl-base-1.0", torch_dtype=torch.float16, variant="fp16", use_safetensors=True)
+        self.base = DiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-xl-base-1.0", cache_dir = "/nfshomes/asarkar6/trinity/model_weights/", torch_dtype=torch.float16, variant="fp16", use_safetensors=True)
         # self.base.unet = torch.compile(self.base.unet, mode="reduce-overhead", fullgraph=True)
         # define refiner
-        self.refiner = DiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-xl-refiner-1.0",text_encoder_2=self.base.text_encoder_2, vae=self.base.vae, torch_dtype=torch.float16, use_safetensors=True, variant="fp16",)
+        self.refiner = DiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-xl-refiner-1.0",text_encoder_2=self.base.text_encoder_2, vae=self.base.vae, torch_dtype=torch.float16, cache_dir = "/nfshomes/asarkar6/trinity/model_weights/", use_safetensors=True, variant="fp16",)
         # load it on GPUs
         self.base.to(self.device)
         self.refiner.to(self.device)

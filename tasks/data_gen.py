@@ -107,51 +107,62 @@ class pipeline6(object):
 class pipeline7(object):
     def __init__(self):
         self.d = CC3m_data().forward()
-        self.qwen_model = run_mllm.run_quen2_vl()
-        self.GD = run_gd.GDINO()
 
     def forward(self):
+        self.qwen_model = run_mllm.run_quen2_vl()
+        cn = []
+        k=0
+        f1 = open("/nfshomes/asarkar6/PRISM/output_1.txt","w")
+        # Task 1 - Get the nouns.
         for i in list(self.d.keys()):
+            f1.write("TS"+"\t"+str(k))
             img_pth = os.path.join("/fs/nexus-datasets/ConceptualCaptions/training_data_CC3M/images/", i)
-            # get dense captions
-            messg = get_messages(typ = 0, img_pth = img_pth)
+
+            # get captions
+            messg = run_mllm.get_messages(typ = 0, img_pth = img_pth)
             caps = self.qwen_model.forward(messg)
 
-            # get summarized captions
-            messg = get_messages(typ = 1, message = caps[0])
-            s_caps = self.qwen_model.forward(messg)
-
-            # get summarized captions
-            messg = get_messages(typ = 2, message = s_caps[0])
+            # get nouns
+            messg = run_mllm.get_messages(typ = 1, message = caps[0])
             nouns = self.qwen_model.forward(messg)
             nouns = nouns[0].split(",")
+        
+            cn.append({"caps": caps, "nouns": nouns, "img_pth":img_pth})
+            k+=1
 
-            # get the bounding boxes
-            k = 0
-            # [list(cn.keys())]
-            for i in nouns:
-                print("Done", k)
-                img_gen = Image.open(os.path.join("/data/aditya/visuals1/",i))
-                out = self.GD.predict([img_gen]*len(cn[i]), cn[i], 0.3, 0.25,)
-                # print(out)
-                out1 = [{"labels": i["labels"][0], "boxes":i['boxes'].cpu().numpy().tolist()[0]} for i in out if len(i['boxes'].cpu().numpy().tolist()[0]) != 0]
-                out_fil = utilities.find_important(out1, img_gen.size)
-                for j in out_fil:
-                    out_img = utilities.visualize(img_gen, j)
-                    os.makedirs(os.path.join("/data/aditya/visuals1/",str(k)), exist_ok =True)
-                    out_img.save(os.path.join(os.path.join("/data/aditya/visuals1/",str(k)),"output_image_"+j["labels"]+".png"))
-                k+=1
+            with open("/nfshomes/asarkar6/trinity/trinity-data-real.json", "w") as final:
+                json.dump(cn, final)
+        
+        torch.cuda.empty_cache()
+        del self.qwen_model
 
+        # Task 2 - Get the bounding boxes.
+        f = open("/nfshomes/asarkar6/trinity/trinity-data-real.json", "r")
+        json_obj = json.load(f)
+        f.close()
+
+        self.GD = run_gd.GDINO()
+        for i in range(len(json_obj)):
+            f1.write("BB"+"\t"+str(i))
+            torch.cuda.empty_cache()
+            img_gen = Image.open(json_obj[i]["img_pth"])
+            out = []
+            for j in range(len(json_obj[i]["nouns"])):
+                out.append(self.GD.predict([img_gen], [json_obj[i]["nouns"][j]], 0.3, 0.25,))
+            out1 = []
+            for k in out:
+                if len(k[0]['boxes'].cpu().numpy().tolist()) != 0:
+                    out1.append({"labels": k[0]['text_labels'][0], "boxes": k[0]['boxes'].cpu().numpy().tolist()[0]})
+            out_fil = utilities.find_important(out1, img_gen.size)
+            json_obj[i]['bbox'] = out_fil
+            with open("/nfshomes/asarkar6/trinity/trinity-data-real.json", "w") as final:
+                json.dump(json_obj, final)
+        torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":
-    # for pipeline 4
-    # dir_pth = "/data/datasets/openimages/images/" 
-    # csv_pth = "/data/datasets/openimages/small_op_annotations.csv"
-    # new_algorithms(dir_pth, csv_pth).pipeline4()
-
     # for pipeline 5
     json_pth = "/nfshomes/asarkar6/trinity/sharegpt4v/share-captioner_coco_lcs_sam_1246k_1107.json"
-    pipeline6(json_pth).forward()
+    pipeline7().forward()
 
 

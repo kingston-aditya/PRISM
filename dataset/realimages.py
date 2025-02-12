@@ -14,7 +14,6 @@ class real_data(object):
             df = pd.read_csv(self.cap_pth, dtype=object)
             sze = 10
             for i in range(sze):
-                print("Done", i)
                 img = Image.open(os.path.join(self.fil_pth, df.iat[i,0]))
                 if img.mode != 'RGB':
                     img = img.convert('RGB')

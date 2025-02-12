@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH -c 32                                
-#SBATCH --gres=gpu:rtxa4000:8      
+#SBATCH --gres=gpu:rtxa6000:6      
 #SBATCH --time=2-23:00:00       
 #SBATCH --account=scavenger
 #SBATCH --partition=scavenger
