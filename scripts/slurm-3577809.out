@@ -14,4 +14,4 @@ No action taken.
 
 CondaError: Run 'conda init' before 'conda activate'
 
-Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:05<00:16,  5.53s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:11<00:11,  5.60s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:16<00:05,  5.46s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:21<00:00,  5.13s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:21<00:00,  5.27s/it]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:05<00:16,  5.64s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:10<00:10,  5.45s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:16<00:05,  5.42s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:21<00:00,  5.15s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:21<00:00,  5.27s/it]

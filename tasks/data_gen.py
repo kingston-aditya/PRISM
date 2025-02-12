@@ -64,13 +64,14 @@ class pipeline6(object):
             caps, nouns = self.llm_obj.forward(prt.replace("image",""))
             nouns = nouns.split(" ")
             cn.append({"nouns":nouns, "caps":caps})
+            with open("/nfshomes/asarkar6/trinity/trinity-data.json", "w") as final:
+                json.dump(cn, final)
         del self.llm_obj
         torch.cuda.empty_cache()
-        with open("/nfshomes/asarkar6/trinity/trinity-data.json", "w") as final:
-            json.dump(cn, final)
+        
 
         # task 2 - get the images
-        self.diff_obj = run_sdxl()
+        self.diff_obj = run_flux()
         f = open("/nfshomes/asarkar6/trinity/trinity-data.json", "r")
         json_obj = json.load(f)
         for i in range(len(json_obj)):
@@ -98,8 +99,8 @@ class pipeline6(object):
                     out1.append({"labels": k[0]['text_labels'][0], "boxes": k[0]['boxes'].cpu().numpy().tolist()[0]})
             out_fil = utilities.find_important(out1, img_gen.size)
             json_obj[i]['bbox'] = out_fil
-        with open("/nfshomes/asarkar6/trinity/trinity-data.json", "w") as final:
-            json.dump(json_obj, final)
+            with open("/nfshomes/asarkar6/trinity/trinity-data.json", "w") as final:
+                json.dump(json_obj, final)
         torch.cuda.empty_cache()
         f1.close()
 
