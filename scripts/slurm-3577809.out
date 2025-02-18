@@ -1,17 +1,0 @@
-no change     /nfshomes/asarkar6/scratch/miniconda3/condabin/conda
-no change     /nfshomes/asarkar6/scratch/miniconda3/bin/conda
-no change     /nfshomes/asarkar6/scratch/miniconda3/bin/conda-env
-no change     /nfshomes/asarkar6/scratch/miniconda3/bin/activate
-no change     /nfshomes/asarkar6/scratch/miniconda3/bin/deactivate
-no change     /nfshomes/asarkar6/scratch/miniconda3/etc/profile.d/conda.sh
-no change     /nfshomes/asarkar6/scratch/miniconda3/etc/fish/conf.d/conda.fish
-no change     /nfshomes/asarkar6/scratch/miniconda3/shell/condabin/Conda.psm1
-no change     /nfshomes/asarkar6/scratch/miniconda3/shell/condabin/conda-hook.ps1
-no change     /nfshomes/asarkar6/scratch/miniconda3/lib/python3.12/site-packages/xontrib/conda.xsh
-no change     /nfshomes/asarkar6/scratch/miniconda3/etc/profile.d/conda.csh
-no change     /nfshomes/asarkar6/.bashrc
-No action taken.
-
-CondaError: Run 'conda init' before 'conda activate'
-
-Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:05<00:16,  5.64s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:10<00:10,  5.45s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:16<00:05,  5.42s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:21<00:00,  5.15s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:21<00:00,  5.27s/it]

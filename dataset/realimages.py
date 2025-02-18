@@ -12,12 +12,15 @@ class real_data(object):
         d = {}
         if self.cap_pth is not None:
             df = pd.read_csv(self.cap_pth, dtype=object)
-            sze = 10
-            for i in range(sze):
-                img = Image.open(os.path.join(self.fil_pth, df.iat[i,0]))
-                if img.mode != 'RGB':
-                    img = img.convert('RGB')
-                d[df.iat[i,0]] = img
+            sze = 20000
+            for i in range(3*sze,5*sze):
+                try:
+                    img = Image.open(os.path.join(self.fil_pth, df.iat[i,0]))
+                    if img.mode != 'RGB':
+                        img = img.convert('RGB')
+                    d[df.iat[i,0]] = img
+                except Exception as e:
+                    pass
         return d
 
 class CC3m_data(real_data):

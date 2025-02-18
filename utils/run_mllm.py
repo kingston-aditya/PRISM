@@ -29,8 +29,8 @@ def get_messages(typ, message=None, img_pth=None):
 
 class run_quen2_vl(object):
     def __init__(self):
-        self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained("Qwen/Qwen2.5-VL-72B-Instruct", torch_dtype=torch.bfloat16, cache_dir = "/nfshomes/asarkar6/trinity/model_weights/", device_map="auto")
-        self.processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-72B-Instruct", cache_dir = "/nfshomes/asarkar6/trinity/model_weights/")
+        self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct", torch_dtype=torch.bfloat16, cache_dir = "/nfshomes/asarkar6/trinity/model_weights/", device_map="auto")
+        self.processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct", cache_dir = "/nfshomes/asarkar6/trinity/model_weights/", device_map="auto")
 
     def forward(self, messages):
         text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)

@@ -49,8 +49,8 @@ class run_phi3(object):
 class run_qwen(object):
     def __init__(self):
         self.device = "cuda"
-        self.model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2.5-72B-Instruct", device_map=self.device, cache_dir = "/nfshomes/asarkar6/trinity/model_weights/", torch_dtype=torch.float16)
-        self.tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-72B-Instruct", cache_dir = "/nfshomes/asarkar6/trinity/model_weights/")
+        self.model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2.5-7B-Instruct", device_map=self.device, cache_dir = "/nfshomes/asarkar6/trinity/model_weights/", torch_dtype=torch.float16)
+        self.tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct", cache_dir = "/nfshomes/asarkar6/trinity/model_weights/")
     
     def forward(self, prt):
         # get summary
