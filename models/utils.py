@@ -84,7 +84,14 @@ class Transformer(nn.Module):
 
     def create_mask(self, txt_len, img_len, idx):
         N, trg_len = trg.shape
-        trg_mask = torch.tril(torch.ones((trg_len, trg_len))).expand(N, 1, trg_len, trg_len)
+        trg_mask = torch.eye(txt_len+img_len)[:img_len,:]
+        trir_mask = torch.tril(torch.ones((txt_len, txt_len)))
+        tril_mask = torch.zeros((txt_len, img_len))
+        for i,j in enumerate(idx):
+            tril_mask[j,i] = 1.
+        tri_mask = torch.cat((tril_mask, trir_mask), dim=1)
+        final_mask = torch.cat((trg_mask, tri_mask), dim=0)
+        final_mask = final_mask.expand(N, 1, txt_len+img_len, txt_len+img_len)
         return trg_mask.to("cuda")
 
     def forward(self, x_txt, x_img):
