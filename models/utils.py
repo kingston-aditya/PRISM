@@ -91,7 +91,9 @@ class Transformer(nn.Module):
         src_len1 = x_txt.shape[0]
         src_len2 = x_img.shape[0]
         mask = self.create_mask(src_len1, src_len2, idx)
-        return 
+        for layer in self.layers:
+            x_txt = layer(x_txt, x_img, x_img, mask)
+        return x_txt
 
 
         
