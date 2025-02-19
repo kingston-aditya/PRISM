@@ -57,15 +57,15 @@ class AttentionBlock(nn.Module):
         return out
 
 class ProjectionBlock(nn.Module):
-    def __init__(self, embed_size, heads, forward_expansion, dropout):
+    def __init__(self, embed_size, forward_expansion, final_size, dropout):
         super(ProjectionBlock, self).__init__()
         self.ffn = nn.Sequential(
-            nn.Linear(embed_size, forward_expansion*embed_size),
+            nn.Linear(embed_size, int(forward_expansion*embed_size)),
             nn.ReLU(),
-            nn.Linear(forward_expansion*embed_size, embed_size)
+            nn.Linear(int(forward_expansion*embed_size), final_size)
             )
-        self.dropout = nn.Dropout(Dropout)
-        self.norm1 = nn.LayerNorm(embed_size)
+        self.dropout = nn.Dropout(dropout)
+        self.norm1 = nn.LayerNorm(final_size)
     
     def forward(self, x):
         xf = self.ffn(x)
@@ -92,9 +92,9 @@ class Transformer(nn.Module):
         tri_mask = torch.cat((tril_mask, trir_mask), dim=1)
         final_mask = torch.cat((trg_mask, tri_mask), dim=0)
         final_mask = final_mask.expand(N, 1, txt_len+img_len, txt_len+img_len)
-        return trg_mask.to("cuda")
+        return final_mask.to("cuda")
 
-    def forward(self, x_txt, x_img):
+    def forward(self, x_txt, x_img, idx):
         src_len1 = x_txt.shape[0]
         src_len2 = x_img.shape[0]
         mask = self.create_mask(src_len1, src_len2, idx)
