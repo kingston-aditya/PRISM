@@ -1,16 +1,18 @@
-#!/bin/bash
-#SBATCH -c 32                                
-#SBATCH --gres=gpu:rtxa4000:4
-#SBATCH --time=2-23:00:00       
-#SBATCH --account=scavenger
-#SBATCH --partition=scavenger
-#SBATCH --qos=scavenger
-#SBATCH --mail-user=asarkar6@umd.edu
-#SBATCH --mail-type=ALL
-
-# Setup your environment (e.g., module load, source activate)
-source activate base
-conda activate textsam
-
-# Run your code (e.g., python train.py)
-python /nfshomes/asarkar6/PRISM/main.py 7
+accelerate launch --multi_gpu train_trinity.py \
+  --pretrained_model_name_or_path="stabilityai/stable-diffusion-xl-base-1.0" \
+  --pretrained_vae_model_name_or_path="madebyollin/sdxl-vae-fp16-fix" \
+  --dataset_name="/nfshomes/asarkar6/scratch/temp_data/" \
+  --output_dir="/nfshomes/asarkar6/scratch/" \
+  --cache_dir="" \
+  --caption_column="prompt" \
+  --object_column="object" \
+  --blocks=4 \
+  --mixed_precision="fp16" \
+  --train_batch_size=1 \
+  --snr_gamma=5.0 \
+  --lr_scheduler="constant" \
+  --lr_warmup_steps=0 \
+  --use_8bit_adam \
+  --max_train_steps=25 \
+  --checkpointing_steps=717 \
+  --seed="0"

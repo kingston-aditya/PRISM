@@ -1,11 +1,0 @@
-Loading checkpoint shards:   0%|          | 0/5 [00:00<?, ?it/s]Loading checkpoint shards:  20%|██        | 1/5 [00:20<01:23, 20.81s/it]Loading checkpoint shards:  40%|████      | 2/5 [00:41<01:02, 20.71s/it]Loading checkpoint shards:  60%|██████    | 3/5 [01:01<00:40, 20.33s/it]Loading checkpoint shards:  80%|████████  | 4/5 [01:21<00:20, 20.08s/it]Loading checkpoint shards: 100%|██████████| 5/5 [01:26<00:00, 14.94s/it]Loading checkpoint shards: 100%|██████████| 5/5 [01:26<00:00, 17.37s/it]
-BB	0
-Traceback (most recent call last):
-  File "/nfshomes/asarkar6/PRISM/main.py", line 17, in <module>
-    run_model(args)
-  File "/nfshomes/asarkar6/PRISM/main.py", line 9, in run_model
-    pipeline7().forward()
-  File "/nfshomes/asarkar6/PRISM/tasks/data_gen.py", line 139, in forward
-    json_obj[i]['bbox'] = out_fil
-                          ^^^^^^^
-UnboundLocalError: cannot access local variable 'out_fil' where it is not associated with a value
