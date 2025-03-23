@@ -26,6 +26,7 @@ import shutil
 from contextlib import nullcontext
 from pathlib import Path
 from PIL import Image
+import json
 
 import accelerate
 import datasets
@@ -67,7 +68,7 @@ if is_torch_npu_available():
 
 DATASET_NAME_MAPPING = {
     "lambdalabs/naruto-blip-captions": ("image", "text"),
-    "/nfshomes/asarkar6/scratch/temp_data/": ("image", "prompt")
+    "/nfshomes/asarkar6/trinity/train_data/": ("image", "prompt","object")
 }
 
 class ForkedPdb(pdb_original.Pdb):
@@ -527,6 +528,7 @@ def encode_object(batch, img_encoders, img_tokenizers, object_column):
             img_embeds = img_embeds.view(bs_embed, seq_len, -1)
             object_embeds_list.append(img_embeds)
 
+    # two text encoders - (197x3)x768 + (197x3)x1280 = (197x3)x2148
     prompt_embeds = torch.concat(object_embeds_list, dim=-1)
     pooled_prompt_embeds = pooled_img_embeds.view(bs_embed, -1)
 
@@ -548,10 +550,8 @@ def encode_object(batch, img_encoders, img_tokenizers, object_column):
         temp_pprompt.append(fin_tensor_1.reshape(3*tok_len, embed_size))
         k += count[i]
     
-    # two text encoders - (197x3)x768 + (197x3)x1280 = (197x3)x2148
     prompt_embeds = torch.stack(temp_prompt, dim=0)
     pooled_prompt_embeds = torch.stack(temp_pprompt, dim=0)
-    ForkedPdb.set_trace()
     return prompt_embeds, pooled_prompt_embeds
 
 # Encode text prompt - Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
@@ -629,7 +629,6 @@ def compute_vae_encodings(batch, vae):
     # There might have slightly performance improvement
     # by changing model_input.cpu() to accelerator.gather(model_input)
     return {"model_input": model_input.cpu()}
-
 
 def generate_timestep_weights(args, num_timesteps):
     weights = torch.ones(num_timesteps)
@@ -816,11 +815,14 @@ def main(args):
 
     # Move unet, vae and text_encoder to device and cast to weight_dtype
     # The VAE is in float32 to avoid NaN losses.
+    # 
     vae.to(accelerator.device, dtype=torch.float32)
     text_encoder_one.to(accelerator.device, dtype=weight_dtype)
     text_encoder_two.to(accelerator.device, dtype=weight_dtype)
     img_encoder_one.to(accelerator.device, dtype=weight_dtype)
     img_encoder_two.to(accelerator.device, dtype=weight_dtype)
+
+    
 
     # Create EMA for the unet.
     if args.use_ema:
@@ -846,6 +848,70 @@ def main(args):
             unet.enable_xformers_memory_efficient_attention()
         else:
             raise ValueError("xformers is not available. Make sure it is installed correctly")
+
+    # Preprocessing the train images of dataset.
+    train_resize = transforms.Resize(args.resolution, interpolation=transforms.InterpolationMode.BILINEAR)
+    train_crop = transforms.CenterCrop(args.resolution) if args.center_crop else transforms.RandomCrop(args.resolution)
+    train_flip = transforms.RandomHorizontalFlip(p=1.0)
+    train_transforms = transforms.Compose([transforms.ToTensor(), transforms.Normalize([0.5], [0.5])])
+
+    # preprocesses images, returns 
+    def preprocess_train(examples):
+        images = [Image.open(os.path.join(args.dataset_name, image_pth)).convert("RGB") for image_pth in examples[args.image_column]]
+        # image aug
+        original_sizes = []
+        all_images = []
+        crop_top_lefts = []
+        for image in images:
+            original_sizes.append((image.height, image.width))
+            image = train_resize(image)
+            if args.random_flip and random.random() < 0.5:
+                # flip
+                image = train_flip(image)
+            if args.center_crop:
+                y1 = max(0, int(round((image.height - args.resolution) / 2.0)))
+                x1 = max(0, int(round((image.width - args.resolution) / 2.0)))
+                image = train_crop(image)
+            else:
+                y1, x1, h, w = train_crop.get_params(image, (args.resolution, args.resolution))
+                image = crop(image, y1, x1, h, w)
+            crop_top_left = (y1, x1)
+            crop_top_lefts.append(crop_top_left)
+            image = train_transforms(image)
+            all_images.append(image)
+
+        return {"original_sizes": original_sizes, "crop_top_lefts": crop_top_lefts, "pixel_values": all_images}
+    
+    class TrinityDataset(torch.utils.data.Dataset):
+        def __init__(self, json_pth):
+            # read the data
+            f = open(json_pth, "r")
+            json_obj = {"image":[], "prompt":[], "object":[]}
+            for line in f:
+                temp = json.loads(line)
+                json_obj["image"].append(temp["file_name"])
+                json_obj["prompt"].append(temp["prompt"])
+                json_obj["object"].append(temp["object"])
+            f.close()
+
+            ForkedPdb().set_trace()
+            
+            # process the data
+            self.img_embeds = preprocess_train(json_obj)
+            self.mmprompt_embeds = multimodal_encode_prompt(json_obj, text_encoders, tokenizers, img_encoders, img_tokenizers, args.proportion_empty_prompts, args.caption_column, args.object_column)
+            self.vae_embeds = compute_vae_encodings(self.img_embeds, vae)
+        
+        def __getitem__(self, idx):
+            return {
+                "model_input": self.vae_embeds[idx],
+                "original_sizes": self.img_embeds["original_sizes"][idx],
+                "crop_top_lefts": self.img_embeds["crop_top_lefts"][idx],
+                "prompt_embeds": self.mmprompt_embeds["prompt_embeds"][idx],
+                "pooled_prompt_embeds": self.mmprompt_embeds["pooled_prompt_embeds"][idx]
+            }
+
+        def __len__(self):
+            return self.img_embeds["original_sizes"].shape[0]
 
     # `accelerate` 0.16.0 will have better support for customized saving
     if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
@@ -885,7 +951,6 @@ def main(args):
 
     if args.gradient_checkpointing:
         unet.enable_gradient_checkpointing()
-        trinity.enable_gradient_checkpointing()
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
@@ -920,92 +985,6 @@ def main(args):
         eps=args.adam_epsilon,
     )
 
-    # Get the datasets: you can either provide your own training and evaluation files (see below)
-    # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
-
-    # In distributed training, the load_dataset function guarantees that only one local process can concurrently
-    # download the dataset.
-    if args.dataset_name is not None:
-        # Downloading and loading a dataset from the hub.
-        dataset = load_dataset(
-            args.dataset_name, args.dataset_config_name, cache_dir=args.cache_dir, data_dir=args.train_data_dir
-        )
-    else:
-        data_files = {}
-        if args.train_data_dir is not None:
-            data_files["train"] = os.path.join(args.train_data_dir, "**")
-        dataset = load_dataset(
-            "imagefolder",
-            data_files=data_files,
-            cache_dir=args.cache_dir,
-        )
-        # See more about loading custom images at
-        # https://huggingface.co/docs/datasets/v2.4.0/en/image_load#imagefolder
-
-    # Preprocessing the datasets.
-    # We need to tokenize inputs and targets.
-    column_names = dataset["train"].column_names
-
-    # 6. Get the column names for input/target.
-    dataset_columns = DATASET_NAME_MAPPING.get(args.dataset_name, None)
-    if args.image_column is None:
-        image_column = dataset_columns[0] if dataset_columns is not None else column_names[0]
-    else:
-        image_column = args.image_column
-        if image_column not in column_names:
-            raise ValueError(
-                f"--image_column' value '{args.image_column}' needs to be one of: {', '.join(column_names)}"
-            )
-    if args.caption_column is None:
-        caption_column = dataset_columns[1] if dataset_columns is not None else column_names[1]
-    else:
-        caption_column = args.caption_column
-        if caption_column not in column_names:
-            raise ValueError(
-                f"--caption_column' value '{args.caption_column}' needs to be one of: {', '.join(column_names)}"
-            )
-
-    # Preprocessing the train images of dataset.
-    train_resize = transforms.Resize(args.resolution, interpolation=transforms.InterpolationMode.BILINEAR)
-    train_crop = transforms.CenterCrop(args.resolution) if args.center_crop else transforms.RandomCrop(args.resolution)
-    train_flip = transforms.RandomHorizontalFlip(p=1.0)
-    train_transforms = transforms.Compose([transforms.ToTensor(), transforms.Normalize([0.5], [0.5])])
-
-    def preprocess_train(examples):
-        images = [image.convert("RGB") for image in examples[image_column]]
-        # image aug
-        original_sizes = []
-        all_images = []
-        crop_top_lefts = []
-        for image in images:
-            original_sizes.append((image.height, image.width))
-            image = train_resize(image)
-            if args.random_flip and random.random() < 0.5:
-                # flip
-                image = train_flip(image)
-            if args.center_crop:
-                y1 = max(0, int(round((image.height - args.resolution) / 2.0)))
-                x1 = max(0, int(round((image.width - args.resolution) / 2.0)))
-                image = train_crop(image)
-            else:
-                y1, x1, h, w = train_crop.get_params(image, (args.resolution, args.resolution))
-                image = crop(image, y1, x1, h, w)
-            crop_top_left = (y1, x1)
-            crop_top_lefts.append(crop_top_left)
-            image = train_transforms(image)
-            all_images.append(image)
-
-        examples["original_sizes"] = original_sizes
-        examples["crop_top_lefts"] = crop_top_lefts
-        examples["pixel_values"] = all_images
-        return examples
-
-    with accelerator.main_process_first():
-        if args.max_train_samples is not None:
-            dataset["train"] = dataset["train"].shuffle(seed=args.seed).select(range(args.max_train_samples))
-        # Set the training transforms
-        train_dataset = dataset["train"].with_transform(preprocess_train)
-
     # Let's first compute all the embeddings so that we can free up the text encoders
     # from memory. We will pre-compute the VAE encodings too.
     text_encoders = [text_encoder_one, text_encoder_two]
@@ -1013,41 +992,15 @@ def main(args):
     img_tokenizers = [img_tokenizer_one, img_tokenizer_two]
     img_encoders = [img_encoder_one, img_encoder_two]
 
-    compute_embeddings_fn = functools.partial(
-        multimodal_encode_prompt,
-        text_encoders=text_encoders,
-        tokenizers=tokenizers,
-        img_encoders=img_encoders,
-        img_tokenizers=img_tokenizers,
-        proportion_empty_prompts=args.proportion_empty_prompts,
-        caption_column=args.caption_column,
-        object_column=args.object_column,
-    )
-
-    compute_vae_encodings_fn = functools.partial(compute_vae_encodings, vae=vae)
+    # compute the datasets
     with accelerator.main_process_first():
-        from datasets.fingerprint import Hasher
+        precomputed_dataset = TrinityDataset(os.path.join(args.dataset_name, "metadata.jsonl"))
+    
+    ForkedPdb().set_trace()
 
-        # fingerprint used by the cache for the other processes to load the result
-        # details: https://github.com/huggingface/diffusers/pull/4038#discussion_r1266078401
-        new_fingerprint = Hasher.hash(args)
-        new_fingerprint_for_vae = Hasher.hash((vae_path, args))
-        train_dataset_with_embeddings = train_dataset.map(
-            compute_embeddings_fn, batched=True, new_fingerprint=new_fingerprint
-        )
-        train_dataset_with_vae = train_dataset.map(
-            compute_vae_encodings_fn,
-            batched=True,
-            batch_size=args.train_batch_size,
-            new_fingerprint=new_fingerprint_for_vae,
-        )
-        precomputed_dataset = concatenate_datasets(
-            [train_dataset_with_embeddings, train_dataset_with_vae.remove_columns(["image", "prompt"])], axis=1
-        )
-        precomputed_dataset = precomputed_dataset.with_transform(preprocess_train)
-
-    del compute_vae_encodings_fn, compute_embeddings_fn, text_encoder_one, text_encoder_two, img_encoder_two, img_encoder_one
+    del text_encoder_one, text_encoder_two, img_encoder_two, img_encoder_one
     del text_encoders, tokenizers, vae, img_encoders, img_tokenizers
+
     gc.collect()
     if is_torch_npu_available():
         torch_npu.npu.empty_cache()
