@@ -2,22 +2,44 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-txt_tok_len = 50
-img_tok_len = 60
-
 # define the masks
 def get_mask(txt_tok, img_tok, typ, alignm=None):
-    if typ=="causal":
+    if typ=="linear":
         mask = torch.tril(torch.ones(txt_tok+img_tok, txt_tok+img_tok)).unsqueeze(0).unsqueeze(0)
-    # elif typ=="transfusion":
-    #     full_mask = torch.zeros(txt_tok+img_tok, txt_tok+img_tok)
-    #     mask_txt_txt = torch.tril(torch.ones(txt_tok, txt_tok))
-    #     mask_img_img = torch.diag(torch.ones(img_tok, img_tok))
-    #     mask_img_txt = torch.zeros(img_tok, txt_tok)
-    #     mask_txt_img =  
-    # elif typ=="trinity":
-    #     full_mask = torch.zeros(txt_tok+img_tok, txt_tok+img_tok)
-    #     part_mask_txt = torch.tril(torch.ones(txt_tok, txt_tok))
+    elif typ=="causal":
+        # get a full mask
+        full_mask = torch.zeros(txt_tok+img_tok, txt_tok+img_tok)
+        # get segments 4
+        mask_txt_txt = torch.tril(torch.ones(txt_tok, txt_tok))
+        # get segments 1 and 2
+        mask_img_img = torch.zeros(img_tok, img_tok+txt_tok)
+        mask_img_img[:,0:img_tok] = 1.0
+        # get segment 3
+        mask_img_txt = torch.ones(txt_tok, img_tok)
+        # merge everything
+        full_mask[0:img_tok,0:img_tok+txt_tok] = mask_img_img 
+        full_mask[img_tok:img_tok+txt_tok, 0:img_tok] = mask_img_txt
+        full_mask[img_tok:img_tok+txt_tok, img_tok:img_tok+txt_tok,] = mask_txt_txt
+        mask = full_mask.unsqueeze(0).unsqueeze(0)
+    elif typ=="trinity":
+        # get a full mask
+        full_mask = torch.zeros(txt_tok+img_tok, txt_tok+img_tok)
+        # get segment 4, segment 2 is complete 0 
+        mask_txt_txt = torch.tril(torch.ones(txt_tok, txt_tok))
+        # get segment 1
+        mask_img_img = torch.zeros(img_tok, img_tok)
+        assert img_tok%3 == 0, "Invalid text token sizes"
+        sit = img_tok//3
+        mask_img_img[0:sit,0:sit] = 1.0
+        mask_img_img[sit:2*sit,sit:2*sit] = 1.0
+        mask_img_img[2*sit:3*sit,2*sit:3*sit] = 1.0
+        # get segment 3
+        mask_txt_img = torch.ones(txt_tok, img_tok)
+        # merge everything
+        full_mask[0:img_tok,0:img_tok] = mask_img_img
+        full_mask[img_tok:img_tok+txt_tok, img_tok:img_tok+txt_tok] = mask_txt_txt
+        full_mask[img_tok:img_tok+txt_tok, 0:img_tok] = mask_txt_img
+        mask = full_mask.unsqueeze(0).unsqueeze(0)
     else:
         mask = None
         print("Incorrect mask")
@@ -110,5 +132,5 @@ if __name__ == "__main__":
     kv = torch.randn(2, 110, 128)
     
     cross_attn = EncoderModel(dim_q=128, dim_kv=128, num_heads=8, num_blocks=8)
-    output = cross_attn(q, kv, typ="causal")
+    output = cross_attn(q, kv, typ="trinity")
     print(output.shape) 

@@ -175,6 +175,13 @@ def parse_args(input_args=None):
     )
 
     parser.add_argument(
+        "--mask_typ",
+        type=str,
+        default="normal",
+        help="The column of the dataset containing a caption or a list of objects.",
+    )
+
+    parser.add_argument(
         "--blocks",
         type=int,
         default=4,
@@ -482,17 +489,20 @@ def encode_object(batch, img_encoders, img_tokenizers, object_column):
     object_images = []
     count = []
     for object_image in object_batch:
-        count.append(len(object_image))
-        for i in object_image:
-            # min and max boundary
-            x_min = i["bbox"]["x_min"]
-            x_max = i["bbox"]["x_max"]
-            y_min = i["bbox"]["y_min"]
-            y_max = i["bbox"]["y_max"]
+        if object_image is not None:
+            count.append(len(object_image))
+            for i in object_image:
+                # min and max boundary
+                x_min = int(i["bbox"]["xmin"])
+                x_max = int(i["bbox"]["xmax"])
+                y_min = int(i["bbox"]["ymin"])
+                y_max = int(i["bbox"]["ymax"])
 
-            # crop the image
-            temp = Image.fromarray(np.asarray(Image.open(i["img_pth"]).astype(np.uint8)))[y_min:y_max, x_min:x_max]
-            object_images.append(temp) 
+                # crop the image
+                temp = Image.fromarray(np.asarray(Image.open(i["img_pth"]).astype(np.uint8))[y_min:y_max, x_min:x_max])
+                object_images.append(temp)
+        else:
+            count.append(0)
 
     # get embeddings
     with torch.no_grad():
@@ -522,15 +532,18 @@ def encode_object(batch, img_encoders, img_tokenizers, object_column):
 
     _, tok_len, embed_size =  prompt_embeds.shape
 
-
     # pad the images with 0s if object images is less than 2
     k = 0
     temp_prompt = []; temp_pprompt = []
     for i in range(len(count)):
-        if count[i] < 3:
+        if count[i] != 0:
             temp_tensor = torch.zeros(int(3 - count[i]), tok_len, embed_size)
             fin_tensor_0 = torch.cat((temp_tensor, prompt_embeds[k:k+count[i],:,:]), dim=0) 
             fin_tensor_1 = torch.cat((temp_tensor, pooled_prompt_embeds[k:k+count[i],:,:]), dim=0) 
+        else:
+            temp_tensor = torch.zeros(int(3 - count[i]), tok_len, embed_size)
+            fin_tensor_0 = temp_tensor 
+            fin_tensor_1 = temp_tensor
         temp_prompt.append(fin_tensor_0.reshape(3*tok_len, embed_size))
         temp_pprompt.append(fin_tensor_1.reshape(3*tok_len, embed_size))
         k += count[i]
@@ -872,6 +885,7 @@ def main(args):
 
     if args.gradient_checkpointing:
         unet.enable_gradient_checkpointing()
+        trinity.enable_gradient_checkpointing()
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
@@ -1078,6 +1092,9 @@ def main(args):
         num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
     )
 
+    # load trinity to cuda
+    trinity.to(accelerator.device, dtype=weight_dtype)
+
     # Prepare everything with our `accelerator`.
     unet, optimizer, train_dataloader, lr_scheduler, trinity = accelerator.prepare(
         unet, optimizer, train_dataloader, lr_scheduler, trinity
@@ -1193,8 +1210,8 @@ def main(args):
                 pooled_prompt_embeds = batch["pooled_prompt_embeds"].to(accelerator.device)
 
                 # get the trinity outputs
-                trinity_embeds = trinity(prompt_embeds, prompt_embeds)
-                trinity_pooled_embeds = trinity(pooled_prompt_embeds, pooled_prompt_embeds)
+                trinity_embeds = trinity(prompt_embeds, prompt_embeds, typ=args.mask_typ)
+                trinity_pooled_embeds = trinity(pooled_prompt_embeds, pooled_prompt_embeds, typ=args.mask_typ)
 
                 # Predict the noise residual
                 unet_added_conditions = {"time_ids": add_time_ids}

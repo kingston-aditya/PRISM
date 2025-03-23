@@ -1,11 +1,12 @@
 accelerate launch --multi_gpu train_trinity.py \
   --pretrained_model_name_or_path="stabilityai/stable-diffusion-xl-base-1.0" \
   --pretrained_vae_model_name_or_path="madebyollin/sdxl-vae-fp16-fix" \
-  --dataset_name="/nfshomes/asarkar6/scratch/temp_data/" \
+  --dataset_name="/nfshomes/asarkar6/trinity/train_data/" \
   --output_dir="/nfshomes/asarkar6/scratch/" \
-  --cache_dir="" \
+  --cache_dir="/nfshomes/asarkar6/trinity/" \
   --caption_column="prompt" \
   --object_column="object" \
+  --mask_typ="normal" \
   --blocks=4 \
   --mixed_precision="fp16" \
   --train_batch_size=1 \
