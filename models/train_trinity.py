@@ -56,6 +56,7 @@ from diffusers.utils.torch_utils import is_compiled_module
 import pdb as pdb_original
 import sys
 from pipeline1 import EncoderModel
+from trinity_dataloader import ObjectDataset, TrinityDataset, TrinityTrainDataset
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.33.0.dev0")
@@ -481,35 +482,36 @@ def parse_args(input_args=None):
 
     return args
 
-# encode object prompt - Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
-def encode_object(batch, img_encoders, img_tokenizers, object_column):
-    object_embeds_list = []
-    object_batch = batch[object_column]
-
-    # store all image embeds
-    object_images = []
+def read_Trinity_dataset(json_pth):
+    f = open(os.path.join(args.dataset_name, json_pth), "r")
+    json_obj = {"image":[], "prompt":[]}
+    object_image = []
     count = []
-    for object_image in object_batch:
-        if object_image is not None:
-            count.append(len(object_image))
-            for i in object_image:
-                # min and max boundary
-                x_min = int(i["bbox"]["xmin"])
-                x_max = int(i["bbox"]["xmax"])
-                y_min = int(i["bbox"]["ymin"])
-                y_max = int(i["bbox"]["ymax"])
-
-                # crop the image
-                temp = Image.fromarray(np.asarray(Image.open(i["img_pth"]).astype(np.uint8))[y_min:y_max, x_min:x_max])
-                object_images.append(temp)
+    for line in f:
+        temp = json.dumps(line)
+        json_obj["image"].append(Image.open(os.path.join(args.dataset_name, temp["file_name"])))
+        json_obj["prompt"].append(temp["prompt"])
+        if temp["object"] is not None:
+            count.append(len(temp["object"]))
+            for j in temp["object"]:
+                x_min = int(j["xmin"])
+                x_max = int(j["xmax"])
+                y_min = int(j["ymin"])
+                y_max = int(j["ymax"])
+                object_image.append(Image.fromarray(np.asarray(Image.open(j["img_pth"]))[y_min:y_max, x_min:x_max]))
         else:
             count.append(0)
+    f.close()
+    return json_obj, object_image, count
 
-    # get embeddings
+
+# encode object prompt - Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
+def encode_object(batch, img_encoders, img_tokenizers, count):
+    object_embeds_list = []
     with torch.no_grad():
         for img_tokenizer, img_encoder in zip(img_tokenizers, img_encoders):
             img_inputs = img_tokenizer(
-                object_images,
+                batch,
                 padding="max_length",
                 truncation=True,
                 return_tensors="pt",
@@ -530,9 +532,9 @@ def encode_object(batch, img_encoders, img_tokenizers, object_column):
 
     # two text encoders - (197x3)x768 + (197x3)x1280 = (197x3)x2148
     prompt_embeds = torch.concat(object_embeds_list, dim=-1)
-    pooled_prompt_embeds = pooled_img_embeds.view(bs_embed, -1)
+    pooled_prompt_embeds = pooled_img_embeds.view(bs_embed, -1)  
 
-    _, tok_len, embed_size =  prompt_embeds.shape
+    _, tok_len, embed_size =  prompt_embeds.shape  
 
     # pad the images with 0s if object images is less than 2
     k = 0
@@ -598,22 +600,21 @@ def encode_prompt(batch, text_encoders, tokenizers, proportion_empty_prompts, ca
     pooled_prompt_embeds = pooled_prompt_embeds.view(bs_embed, -1)
     return prompt_embeds, pooled_prompt_embeds
 
-def multimodal_encode_prompt(batch, text_encoders, tokenizers, img_encoders, img_tokenizers, proportion_empty_prompts, caption_column, object_column, is_train=True):
-    # get image and text embeddings
-    img_prompt_embeds,  img_pooled_prompt_embeds = encode_object(batch, img_encoders, img_tokenizers, object_column)
-    txt_prompt_embeds, txt_pooled_prompt_embeds = encode_prompt(batch, text_encoders, tokenizers, proportion_empty_prompts, caption_column, is_train)
-
+def multimodal_encode_prompt(temp):
     # get token lengths
     global txt_tok_len
     global img_tok_len
-    txt_tok_len = txt_prompt_embeds.shape[-2]
-    img_tok_len = img_prompt_embeds.shape[-2]
+    txt_tok_len = temp["pooled_prompt_embeds"].shape[-2]
+    img_tok_len = temp["object_prompt_embeds"].shape[-2]
 
     # concat them across dim 1
-    cat_prompt_embeds = torch.cat((img_prompt_embeds, txt_prompt_embeds), dim=-2)
-    cat_pooled_prompt_embeds = torch.cat((img_pooled_prompt_embeds, txt_pooled_prompt_embeds), dim=-2)
+    cat_prompt_embeds = torch.cat((temp["prompt_embeds"], temp["object_prompt_embeds"]), dim=-2)
+    cat_pooled_prompt_embeds = torch.cat((temp["pooled_prompt_embeds"], temp["object_pooled_prompt_embeds"]), dim=-2)
 
-    return {"prompt_embeds": cat_prompt_embeds.cpu(), "pooled_prompt_embeds": cat_pooled_prompt_embeds.cpu()}
+    temp["prompt_embeds"] = cat_prompt_embeds
+    temp["pooled_prompt_embeds"] = cat_pooled_prompt_embeds
+    del temp["object_prompt_embeds"], temp["object_pooled_prompt_embeds"] 
+    return temp
 
 
 def compute_vae_encodings(batch, vae):
@@ -729,11 +730,6 @@ def main(args):
         if args.output_dir is not None:
             os.makedirs(args.output_dir, exist_ok=True)
 
-        # if args.push_to_hub:
-        #     repo_id = create_repo(
-        #         repo_id=args.hub_model_id or Path(args.output_dir).name, exist_ok=True, token=args.hub_token
-        #     ).repo_id
-
     # Load the tokenizers
     tokenizer_one = AutoTokenizer.from_pretrained(
         args.pretrained_model_name_or_path,
@@ -822,8 +818,6 @@ def main(args):
     img_encoder_one.to(accelerator.device, dtype=weight_dtype)
     img_encoder_two.to(accelerator.device, dtype=weight_dtype)
 
-    
-
     # Create EMA for the unet.
     if args.use_ema:
         ema_unet = UNet2DConditionModel.from_pretrained(
@@ -848,7 +842,36 @@ def main(args):
             unet.enable_xformers_memory_efficient_attention()
         else:
             raise ValueError("xformers is not available. Make sure it is installed correctly")
+        
+    # Get the embeddings and unload models
+    # Step 1: get the object images - 
+    # a) read the images and count - store all image embeds
+    json_obj, object_image, count = read_Trinity_dataset("metadata.jsonl")
+    object_dataset = ObjectDataset(object_image)
+    dtel = torch.utils.data.DataLoader(
+        object_dataset,
+        shuffle=False,
+        batch_size=args.train_batch_size,
+        num_workers=args.dataloader_num_workers,
+    )
 
+    # b) get the tokenizers and encoders ready
+    img_tokenizers = [img_tokenizer_one, img_tokenizer_two]
+    img_encoders = [img_encoder_one, img_encoder_two]
+
+    # c) get object image embeddings
+    img_embeds = []
+    img_pembeds = []
+    for batch in dtel:
+        temp1, temp2 = encode_object(batch, img_encoders, img_tokenizers, count)
+        img_embeds.append(temp1)
+        img_pembeds.append(temp2)
+    object_prompt_embeds = torch.stack(img_embeds, dim=0)
+    object_pooled_prompt_embeds = torch.stack(img_pembeds, dim=0)
+
+    del img_encoder_two, img_encoder_one, img_encoders, img_tokenizers
+
+    # Step 2: Read train images and captions
     # Preprocessing the train images of dataset.
     train_resize = transforms.Resize(args.resolution, interpolation=transforms.InterpolationMode.BILINEAR)
     train_crop = transforms.CenterCrop(args.resolution) if args.center_crop else transforms.RandomCrop(args.resolution)
@@ -857,7 +880,7 @@ def main(args):
 
     # preprocesses images, returns 
     def preprocess_train(examples):
-        images = [Image.open(os.path.join(args.dataset_name, image_pth)).convert("RGB") for image_pth in examples[args.image_column]]
+        images = [image.convert("RGB") for image in examples[args.image_column]]
         # image aug
         original_sizes = []
         all_images = []
@@ -881,37 +904,6 @@ def main(args):
             all_images.append(image)
 
         return {"original_sizes": original_sizes, "crop_top_lefts": crop_top_lefts, "pixel_values": all_images}
-    
-    class TrinityDataset(torch.utils.data.Dataset):
-        def __init__(self, json_pth):
-            # read the data
-            f = open(json_pth, "r")
-            json_obj = {"image":[], "prompt":[], "object":[]}
-            for line in f:
-                temp = json.loads(line)
-                json_obj["image"].append(temp["file_name"])
-                json_obj["prompt"].append(temp["prompt"])
-                json_obj["object"].append(temp["object"])
-            f.close()
-
-            ForkedPdb().set_trace()
-            
-            # process the data
-            self.img_embeds = preprocess_train(json_obj)
-            self.mmprompt_embeds = multimodal_encode_prompt(json_obj, text_encoders, tokenizers, img_encoders, img_tokenizers, args.proportion_empty_prompts, args.caption_column, args.object_column)
-            self.vae_embeds = compute_vae_encodings(self.img_embeds, vae)
-        
-        def __getitem__(self, idx):
-            return {
-                "model_input": self.vae_embeds[idx],
-                "original_sizes": self.img_embeds["original_sizes"][idx],
-                "crop_top_lefts": self.img_embeds["crop_top_lefts"][idx],
-                "prompt_embeds": self.mmprompt_embeds["prompt_embeds"][idx],
-                "pooled_prompt_embeds": self.mmprompt_embeds["pooled_prompt_embeds"][idx]
-            }
-
-        def __len__(self):
-            return self.img_embeds["original_sizes"].shape[0]
 
     # `accelerate` 0.16.0 will have better support for customized saving
     if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
@@ -989,17 +981,36 @@ def main(args):
     # from memory. We will pre-compute the VAE encodings too.
     text_encoders = [text_encoder_one, text_encoder_two]
     tokenizers = [tokenizer_one, tokenizer_two]
-    img_tokenizers = [img_tokenizer_one, img_tokenizer_two]
-    img_encoders = [img_encoder_one, img_encoder_two]
-
+    
     # compute the datasets
     with accelerator.main_process_first():
-        precomputed_dataset = TrinityDataset(os.path.join(args.dataset_name, "metadata.jsonl"))
-    
-    ForkedPdb().set_trace()
+        img_cap_dataset = TrinityDataset(json_obj)
+        dtel_1 = torch.utils.data.DataLoader(
+            img_cap_dataset,
+            shuffle=False,
+            batch_size=args.train_batch_size,
+            num_workers=args.dataloader_num_workers,
+        )
+        temp = {"model_input":[], "prompt_embeds":[], "pooled_prompt_embeds":[]}
+        for batch in dtel_1:
+            img_dict = preprocess_train(batch)
+            out1, out2 = encode_prompt(batch, text_encoders, tokenizers, args.proportion_empty_prompts, args.caption_column)
+            temp["model_input"].append(compute_vae_encodings(img_dict, vae))
+            temp["prompt_embeds"].append(out1)
+            temp["pooled_prompt_embeds"].append(out2)
+        temp["model_input"] = torch.stack(temp["model_input"], dim=0)
+        temp["prompt_embeds"] = torch.stack(temp["prompt_embeds"], dim=0)
+        temp["pooled_prompt_embeds"] = torch.stack(temp["pooled_prompt_embeds"], dim=0)
+        temp["object_prompt_embeds"] = object_prompt_embeds
+        temp["object_pooled_prompt_embeds"] = object_pooled_prompt_embeds
+        temp["original_sizes"] = img_dict["original_sizes"]
+        temp["crop_top_lefts"] = img_dict["crop_top_lefts"]
 
-    del text_encoder_one, text_encoder_two, img_encoder_two, img_encoder_one
-    del text_encoders, tokenizers, vae, img_encoders, img_tokenizers
+    # concatenate object images and prompts
+    temp = multimodal_encode_prompt(temp)
+
+    del text_encoder_one, text_encoder_two
+    del text_encoders, tokenizers, vae
 
     gc.collect()
     if is_torch_npu_available():
@@ -1007,26 +1018,27 @@ def main(args):
     elif torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    def collate_fn(examples):
-        model_input = torch.stack([torch.tensor(example["model_input"]) for example in examples])
-        original_sizes = [example["original_sizes"] for example in examples]
-        crop_top_lefts = [example["crop_top_lefts"] for example in examples]
-        prompt_embeds = torch.stack([torch.tensor(example["prompt_embeds"]) for example in examples])
-        pooled_prompt_embeds = torch.stack([torch.tensor(example["pooled_prompt_embeds"]) for example in examples])
+    # def collate_fn(examples):
+    #     model_input = torch.stack([torch.tensor(example["model_input"]) for example in examples])
+    #     original_sizes = [example["original_sizes"] for example in examples]
+    #     crop_top_lefts = [example["crop_top_lefts"] for example in examples]
+    #     prompt_embeds = torch.stack([torch.tensor(example["prompt_embeds"]) for example in examples])
+    #     pooled_prompt_embeds = torch.stack([torch.tensor(example["pooled_prompt_embeds"]) for example in examples])
 
-        return {
-            "model_input": model_input,
-            "prompt_embeds": prompt_embeds,
-            "pooled_prompt_embeds": pooled_prompt_embeds,
-            "original_sizes": original_sizes,
-            "crop_top_lefts": crop_top_lefts,
-        }
+    #     return {
+    #         "model_input": model_input,
+    #         "prompt_embeds": prompt_embeds,
+    #         "pooled_prompt_embeds": pooled_prompt_embeds,
+    #         "original_sizes": original_sizes,
+    #         "crop_top_lefts": crop_top_lefts,
+    #     }
 
     # DataLoaders creation:
+    precomputed_dataset = TrinityTrainDataset(temp)
     train_dataloader = torch.utils.data.DataLoader(
         precomputed_dataset,
         shuffle=True,
-        collate_fn=collate_fn,
+        # collate_fn=collate_fn,
         batch_size=args.train_batch_size,
         num_workers=args.dataloader_num_workers,
     )
