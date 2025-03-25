@@ -43,8 +43,10 @@ from packaging import version
 from torchvision import transforms
 from torchvision.transforms.functional import crop
 from tqdm.auto import tqdm
-from transformers import AutoTokenizer, PretrainedConfig, AutoProcessor, CLIPVisionModel, CLIPVisionModelWithProjection
+from transformers import AutoTokenizer, PretrainedConfig, CLIPImageProcessor, CLIPVisionModel, CLIPVisionModelWithProjection
 
+import sys
+sys.path.insert(1, "/nfshomes/asarkar6/aditya/PRISM/")
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionXLPipeline, UNet2DConditionModel
 from diffusers.optimization import get_scheduler
@@ -54,8 +56,8 @@ from diffusers.utils.import_utils import is_torch_npu_available, is_xformers_ava
 from diffusers.utils.torch_utils import is_compiled_module
 
 import pdb as pdb_original
-import sys
-from pipeline1 import EncoderModel
+
+from pipeline1 import EncoderModel, ProjectLayer
 from trinity_dataloader import ObjectDataset, TrinityDataset, TrinityTrainDataset
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
@@ -104,6 +106,18 @@ def import_model_class_from_model_name_or_path(
     else:
         raise ValueError(f"{model_class} is not supported.")
 
+def dynamic_collate(batch):
+    batch_x = []
+    for item in batch:
+        batch_x.append(item)
+    return batch_x
+
+def dynamic_collate_1(batch):
+    batch_x = {"image":[], "prompt":[]}
+    for item in batch:
+        batch_x["image"].append(item["image"])
+        batch_x["prompt"].append(item["prompt"])
+    return batch_x
 
 def parse_args(input_args=None):
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
@@ -482,14 +496,30 @@ def parse_args(input_args=None):
 
     return args
 
+def check_count(batch, count):
+    N, _, tok_len, embed_size = batch.shape
+    # pad the images with 0s if object images is less than 3
+    k = 0
+    temp_prompt = []
+    for i in range(len(count)):
+        if count[i] != 0:
+            temp_tensor = torch.zeros(1, int(3 - count[i]), tok_len, embed_size)
+            fin_tensor_0 = torch.cat((temp_tensor, batch[k:k+count[i],:,:,:].transpose(0,1)), dim=1) 
+        else:
+            temp_tensor = torch.zeros(1, int(3 - count[i]), tok_len, embed_size)
+            fin_tensor_0 = temp_tensor 
+        temp_prompt.append(fin_tensor_0.reshape(1, 3*tok_len, embed_size))
+        k += count[i]
+    return torch.cat(temp_prompt, dim=0)
+
 def read_Trinity_dataset(json_pth):
     f = open(os.path.join(args.dataset_name, json_pth), "r")
     json_obj = {"image":[], "prompt":[]}
     object_image = []
     count = []
     for line in f:
-        temp = json.dumps(line)
-        json_obj["image"].append(Image.open(os.path.join(args.dataset_name, temp["file_name"])))
+        temp = json.loads(line.strip())
+        json_obj["image"].append(Image.open(os.path.join(args.dataset_name, temp["file_name"])).convert("RGB"))
         json_obj["prompt"].append(temp["prompt"])
         if temp["object"] is not None:
             count.append(len(temp["object"]))
@@ -511,50 +541,20 @@ def encode_object(batch, img_encoders, img_tokenizers, count):
     with torch.no_grad():
         for img_tokenizer, img_encoder in zip(img_tokenizers, img_encoders):
             img_inputs = img_tokenizer(
-                batch,
-                padding="max_length",
-                truncation=True,
+                images = batch,
                 return_tensors="pt",
             )
             img_inputs = img_inputs.to(img_encoder.device)
-            img_embeds = img_encoder(
-                **img_inputs,
-                output_hidden_states=True,
-                return_dict=False,
-            )
+            img_embeds = img_encoder(**img_inputs)
+            img_embeds = img_embeds.last_hidden_state
 
             # We are only ALWAYS interested in the pooled output of the final text encoder
-            pooled_img_embeds = img_embeds[0]
-            img_embeds = img_embeds[-1][-2]
-            bs_embed, seq_len, _ = img_embeds.shape
-            img_embeds = img_embeds.view(bs_embed, seq_len, -1)
             object_embeds_list.append(img_embeds)
 
     # two text encoders - (197x3)x768 + (197x3)x1280 = (197x3)x2148
     prompt_embeds = torch.concat(object_embeds_list, dim=-1)
-    pooled_prompt_embeds = pooled_img_embeds.view(bs_embed, -1)  
-
-    _, tok_len, embed_size =  prompt_embeds.shape  
-
-    # pad the images with 0s if object images is less than 2
-    k = 0
-    temp_prompt = []; temp_pprompt = []
-    for i in range(len(count)):
-        if count[i] != 0:
-            temp_tensor = torch.zeros(int(3 - count[i]), tok_len, embed_size)
-            fin_tensor_0 = torch.cat((temp_tensor, prompt_embeds[k:k+count[i],:,:]), dim=0) 
-            fin_tensor_1 = torch.cat((temp_tensor, pooled_prompt_embeds[k:k+count[i],:,:]), dim=0) 
-        else:
-            temp_tensor = torch.zeros(int(3 - count[i]), tok_len, embed_size)
-            fin_tensor_0 = temp_tensor 
-            fin_tensor_1 = temp_tensor
-        temp_prompt.append(fin_tensor_0.reshape(3*tok_len, embed_size))
-        temp_pprompt.append(fin_tensor_1.reshape(3*tok_len, embed_size))
-        k += count[i]
-    
-    prompt_embeds = torch.stack(temp_prompt, dim=0)
-    pooled_prompt_embeds = torch.stack(temp_pprompt, dim=0)
-    return prompt_embeds, pooled_prompt_embeds
+    prompt_embeds = prompt_embeds.unsqueeze(1)
+    return prompt_embeds.cpu(), prompt_embeds.cpu()
 
 # Encode text prompt - Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
 def encode_prompt(batch, text_encoders, tokenizers, proportion_empty_prompts, caption_column, is_train=True):
@@ -593,28 +593,24 @@ def encode_prompt(batch, text_encoders, tokenizers, proportion_empty_prompts, ca
             bs_embed, seq_len, _ = prompt_embeds.shape
             prompt_embeds = prompt_embeds.view(bs_embed, seq_len, -1)
             prompt_embeds_list.append(prompt_embeds)
-
             
     # two text encoders - 77x768 + 77x1280 = 77x2148
     prompt_embeds = torch.concat(prompt_embeds_list, dim=-1)
     pooled_prompt_embeds = pooled_prompt_embeds.view(bs_embed, -1)
-    return prompt_embeds, pooled_prompt_embeds
+    return prompt_embeds.cpu(), pooled_prompt_embeds.cpu()
 
-def multimodal_encode_prompt(temp):
+def multimodal_encode_prompt(prompt_embeds, pooled_prompt_embeds, object_prompt_embeds):
     # get token lengths
     global txt_tok_len
     global img_tok_len
-    txt_tok_len = temp["pooled_prompt_embeds"].shape[-2]
-    img_tok_len = temp["object_prompt_embeds"].shape[-2]
+    txt_tok_len = pooled_prompt_embeds.shape[-2]
+    img_tok_len = object_prompt_embeds.shape[-2]
 
     # concat them across dim 1
-    cat_prompt_embeds = torch.cat((temp["prompt_embeds"], temp["object_prompt_embeds"]), dim=-2)
-    cat_pooled_prompt_embeds = torch.cat((temp["pooled_prompt_embeds"], temp["object_pooled_prompt_embeds"]), dim=-2)
-
-    temp["prompt_embeds"] = cat_prompt_embeds
-    temp["pooled_prompt_embeds"] = cat_pooled_prompt_embeds
-    del temp["object_prompt_embeds"], temp["object_pooled_prompt_embeds"] 
-    return temp
+    cat_prompt_embeds = torch.cat((prompt_embeds, object_prompt_embeds), dim=-2)
+    cat_pooled_prompt_embeds = torch.cat((pooled_prompt_embeds, object_prompt_embeds), dim=-2)
+ 
+    return cat_prompt_embeds, cat_pooled_prompt_embeds
 
 
 def compute_vae_encodings(batch, vae):
@@ -629,7 +625,7 @@ def compute_vae_encodings(batch, vae):
 
     # There might have slightly performance improvement
     # by changing model_input.cpu() to accelerator.gather(model_input)
-    return {"model_input": model_input.cpu()}
+    return model_input.cpu()
 
 def generate_timestep_weights(args, num_timesteps):
     weights = torch.ones(num_timesteps)
@@ -744,9 +740,9 @@ def main(args):
         use_fast=False,
     )
 
-    # Load the Autoprocessors
-    img_tokenizer_one = AutoProcessor.from_pretrained("openai/clip-vit-large-patch14", cache_dir=args.cache_dir)
-    img_tokenizer_two = AutoProcessor.from_pretrained("laion/CLIP-ViT-bigG-14-laion2B-39B-b160k", cache_dir=args.cache_dir)
+    # Load the CLIPImageProcessors
+    img_tokenizer_one = CLIPImageProcessor.from_pretrained("openai/clip-vit-large-patch14", cache_dir=args.cache_dir)
+    img_tokenizer_two = CLIPImageProcessor.from_pretrained("laion/CLIP-ViT-bigG-14-laion2B-39B-b160k", cache_dir=args.cache_dir)
 
     # import correct text encoder classes
     text_encoder_cls_one = import_model_class_from_model_name_or_path(
@@ -787,19 +783,12 @@ def main(args):
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision, variant=args.variant
     )
 
-    # load the transformer
-    trinity = EncoderModel(2048, 2048, num_blocks=args.blocks)
-
     # Freeze vae and text encoders.
     vae.requires_grad_(False)
     text_encoder_one.requires_grad_(False)
     text_encoder_two.requires_grad_(False)
     img_encoder_one.requires_grad_(False)
     img_encoder_two.requires_grad_(False)
-
-    # Set unet and transformer as trainable.
-    unet.train()
-    trinity.train()
 
     # For mixed precision training we cast all non-trainable weights to half-precision
     # as these weights are only used for inference, keeping weights in full precision is not required.
@@ -847,11 +836,13 @@ def main(args):
     # Step 1: get the object images - 
     # a) read the images and count - store all image embeds
     json_obj, object_image, count = read_Trinity_dataset("metadata.jsonl")
+
     object_dataset = ObjectDataset(object_image)
     dtel = torch.utils.data.DataLoader(
         object_dataset,
         shuffle=False,
-        batch_size=args.train_batch_size,
+        batch_size=args.train_batch_size*2,
+        collate_fn=dynamic_collate,
         num_workers=args.dataloader_num_workers,
     )
 
@@ -866,8 +857,8 @@ def main(args):
         temp1, temp2 = encode_object(batch, img_encoders, img_tokenizers, count)
         img_embeds.append(temp1)
         img_pembeds.append(temp2)
-    object_prompt_embeds = torch.stack(img_embeds, dim=0)
-    object_pooled_prompt_embeds = torch.stack(img_pembeds, dim=0)
+    object_prompt_embeds = torch.cat(img_embeds, dim=0)
+    object_pooled_prompt_embeds = torch.cat(img_pembeds, dim=0)
 
     del img_encoder_two, img_encoder_one, img_encoders, img_tokenizers
 
@@ -967,16 +958,6 @@ def main(args):
     else:
         optimizer_class = torch.optim.AdamW
 
-    # Optimizer creation
-    params_to_optimize = list(unet.parameters()) + list(trinity.parameters())
-    optimizer = optimizer_class(
-        params_to_optimize,
-        lr=args.learning_rate,
-        betas=(args.adam_beta1, args.adam_beta2),
-        weight_decay=args.adam_weight_decay,
-        eps=args.adam_epsilon,
-    )
-
     # Let's first compute all the embeddings so that we can free up the text encoders
     # from memory. We will pre-compute the VAE encodings too.
     text_encoders = [text_encoder_one, text_encoder_two]
@@ -988,29 +969,50 @@ def main(args):
         dtel_1 = torch.utils.data.DataLoader(
             img_cap_dataset,
             shuffle=False,
-            batch_size=args.train_batch_size,
+            collate_fn=dynamic_collate_1,
+            batch_size=2*args.train_batch_size,
             num_workers=args.dataloader_num_workers,
         )
-        temp = {"model_input":[], "prompt_embeds":[], "pooled_prompt_embeds":[]}
-        for batch in dtel_1:
+        
+        temp = {"model_input":[], "prompt_embeds":[], "pooled_prompt_embeds":[], "original_sizes":[], "crop_top_lefts":[]}
+        for batch in tqdm(dtel_1, desc="Processing", disable=not accelerator.is_local_main_process,):
             img_dict = preprocess_train(batch)
+            temp["original_sizes"].append(img_dict["original_sizes"])
+            temp["crop_top_lefts"].append(img_dict["crop_top_lefts"])
             out1, out2 = encode_prompt(batch, text_encoders, tokenizers, args.proportion_empty_prompts, args.caption_column)
             temp["model_input"].append(compute_vae_encodings(img_dict, vae))
             temp["prompt_embeds"].append(out1)
             temp["pooled_prompt_embeds"].append(out2)
-        temp["model_input"] = torch.stack(temp["model_input"], dim=0)
-        temp["prompt_embeds"] = torch.stack(temp["prompt_embeds"], dim=0)
-        temp["pooled_prompt_embeds"] = torch.stack(temp["pooled_prompt_embeds"], dim=0)
-        temp["object_prompt_embeds"] = object_prompt_embeds
-        temp["object_pooled_prompt_embeds"] = object_pooled_prompt_embeds
-        temp["original_sizes"] = img_dict["original_sizes"]
-        temp["crop_top_lefts"] = img_dict["crop_top_lefts"]
+        temp["model_input"] = torch.cat(temp["model_input"], dim=0)
+        temp["prompt_embeds"] = torch.cat(temp["prompt_embeds"], dim=0)
+        temp["pooled_prompt_embeds"] = torch.cat(temp["pooled_prompt_embeds"], dim=0)
 
-    # concatenate object images and prompts
-    temp = multimodal_encode_prompt(temp)
+        temp["object_prompt_embeds"] = object_prompt_embeds
+        temp["object_pooled_prompt_embeds"] = object_prompt_embeds
+        temp["original_sizes"] = [j for i in temp["original_sizes"] for j in i]
+        temp["crop_top_lefts"] = [j for i in temp["crop_top_lefts"] for j in i] 
 
     del text_encoder_one, text_encoder_two
     del text_encoders, tokenizers, vae
+
+    temp["object_prompt_embeds"] = check_count(temp["object_prompt_embeds"], count)
+    temp["object_pooled_prompt_embeds"] = temp["object_prompt_embeds"]
+
+    # load the transformer
+    trinity = EncoderModel(temp["prompt_embeds"].shape[-1], temp["prompt_embeds"].shape[-1], num_blocks=args.blocks)
+    proj_layer = ProjectLayer(temp["prompt_embeds"].shape[-1], temp["object_prompt_embeds"].shape[-1])
+    trinity.train()
+    proj_layer.train()
+
+    # Optimizer creation
+    params_to_optimize = list(unet.parameters()) + list(trinity.parameters()) + list(proj_layer.parameters())
+    optimizer = optimizer_class(
+        params_to_optimize,
+        lr=args.learning_rate,
+        betas=(args.adam_beta1, args.adam_beta2),
+        weight_decay=args.adam_weight_decay,
+        eps=args.adam_epsilon,
+    )
 
     gc.collect()
     if is_torch_npu_available():
@@ -1018,27 +1020,28 @@ def main(args):
     elif torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    # def collate_fn(examples):
-    #     model_input = torch.stack([torch.tensor(example["model_input"]) for example in examples])
-    #     original_sizes = [example["original_sizes"] for example in examples]
-    #     crop_top_lefts = [example["crop_top_lefts"] for example in examples]
-    #     prompt_embeds = torch.stack([torch.tensor(example["prompt_embeds"]) for example in examples])
-    #     pooled_prompt_embeds = torch.stack([torch.tensor(example["pooled_prompt_embeds"]) for example in examples])
-
-    #     return {
-    #         "model_input": model_input,
-    #         "prompt_embeds": prompt_embeds,
-    #         "pooled_prompt_embeds": pooled_prompt_embeds,
-    #         "original_sizes": original_sizes,
-    #         "crop_top_lefts": crop_top_lefts,
-    #     }
+    def collate_fn(batch):
+        original_sizes = [item["original_sizes"] for item in batch]
+        crop_top_lefts = [item["crop_top_lefts"] for item in batch]
+        model_input = torch.stack([torch.tensor(item["model_input"]) for item in batch])
+        prompt_embeds = torch.stack([torch.tensor(item["prompt_embeds"]) for item in batch])
+        pooled_prompt_embeds = torch.stack([torch.tensor(item["pooled_prompt_embeds"]) for item in batch])
+        object_prompt_embeds = torch.stack([torch.tensor(item["object_prompt_embeds"]) for item in batch])
+        return {
+            "model_input": model_input,
+            "prompt_embeds": prompt_embeds,
+            "pooled_prompt_embeds": pooled_prompt_embeds,
+            "original_sizes": original_sizes,
+            "crop_top_lefts": crop_top_lefts,
+            "object_prompt_embeds": object_prompt_embeds,
+        }
 
     # DataLoaders creation:
     precomputed_dataset = TrinityTrainDataset(temp)
     train_dataloader = torch.utils.data.DataLoader(
         precomputed_dataset,
         shuffle=True,
-        # collate_fn=collate_fn,
+        collate_fn=collate_fn,
         batch_size=args.train_batch_size,
         num_workers=args.dataloader_num_workers,
     )
@@ -1059,10 +1062,11 @@ def main(args):
 
     # load trinity to cuda
     trinity.to(accelerator.device, dtype=weight_dtype)
+    proj_layer.to(accelerator.device, dtype=weight_dtype)
 
     # Prepare everything with our `accelerator`.
-    unet, optimizer, train_dataloader, lr_scheduler, trinity = accelerator.prepare(
-        unet, optimizer, train_dataloader, lr_scheduler, trinity
+    unet, optimizer, train_dataloader, lr_scheduler, trinity, proj_layer = accelerator.prepare(
+        unet, optimizer, train_dataloader, lr_scheduler, trinity, proj_layer
     )
 
     if args.use_ema:
@@ -1168,19 +1172,32 @@ def main(args):
                 add_time_ids = torch.cat(
                     [compute_time_ids(s, c) for s, c in zip(batch["original_sizes"], batch["crop_top_lefts"])]
                 )
-                
+                ForkedPdb().set_trace()
+
+                unet_added_conditions = {"time_ids": add_time_ids}
                 
                 # get the prompt embeds
-                prompt_embeds = batch["prompt_embeds"].to(accelerator.device, dtype=weight_dtype)
-                pooled_prompt_embeds = batch["pooled_prompt_embeds"].to(accelerator.device)
+                prompt_embeds = batch["prompt_embeds"]
+                object_prompt_embeds = batch["object_prompt_embeds"]
+                txt_tok_len = prompt_embeds.shape[-2]
+                img_tok_len = object_prompt_embeds.shape[-2]
 
-                # get the trinity outputs
-                trinity_embeds = trinity(prompt_embeds, prompt_embeds, typ=args.mask_typ)
-                trinity_pooled_embeds = trinity(pooled_prompt_embeds, pooled_prompt_embeds, typ=args.mask_typ)
+                # get the peojected embeddings
+                object_prompt_embeds = proj_layer(object_prompt_embeds)
+                prompt_embeds, pooled_prompt_embeds = multimodal_encode_prompt(prompt_embeds, prompt_embeds, object_prompt_embeds)
+                
+                prompt_embeds = prompt_embeds.to(accelerator.device, dtype=weight_dtype)
+                pooled_prompt_embeds = pooled_prompt_embeds.to(accelerator.device)
+
+                # get the trinity embeds
+                trinity_embeds = trinity(prompt_embeds, prompt_embeds, txt_tok_len, img_tok_len, typ=args.mask_typ)
+
+                trinity_embeds = trinity_embeds.to(accelerator.device, dtype=weight_dtype)
+                trinity_pooled_embeds = trinity_embeds.to(accelerator.device)
 
                 # Predict the noise residual
-                unet_added_conditions = {"time_ids": add_time_ids}
                 unet_added_conditions.update({"text_embeds": trinity_pooled_embeds})
+
                 model_pred = unet(
                     noisy_model_input,
                     timesteps,

@@ -1,4 +1,5 @@
 from torch.utils.data import Dataset
+import torch
 
 class ObjectDataset(Dataset):
     def __init__(self, img_lst):
@@ -38,6 +39,7 @@ class TrinityTrainDataset(Dataset):
             "pooled_prompt_embeds": self.temp["pooled_prompt_embeds"][idx],
             "original_sizes": self.temp["original_sizes"][idx],
             "crop_top_lefts": self.temp["crop_top_lefts"][idx],
+            "object_prompt_embeds": self.temp["object_prompt_embeds"][idx]
         }
 
     def __len__(self):

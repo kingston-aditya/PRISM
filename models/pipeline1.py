@@ -63,7 +63,7 @@ class CrossAttention(nn.Module):
         # dropout layer
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, q, kv, typ):
+    def forward(self, q, kv, txt_tok_len, img_tok_len, typ):
         B, N, C = q.shape
         _, N1, _ = kv.shape
 
@@ -75,6 +75,7 @@ class CrossAttention(nn.Module):
 
         # add causal mask
         causal_mask = get_mask(txt_tok_len, img_tok_len, typ)
+        causal_mask = causal_mask.to("cuda")
         attn_weights = attn_weights.masked_fill(causal_mask == 0, float('-inf'))
 
         # continue processing
@@ -86,7 +87,22 @@ class CrossAttention(nn.Module):
         output = self.out_proj(attn_output)
         
         return output
-    
+
+class ProjectLayer(nn.Module):
+    def __init__(self, embed_dim, hidden_dim):
+        super(ProjectLayer, self).__init__()
+        self.linear = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, embed_dim)
+        )
+        self.norm = nn.LayerNorm(embed_dim)
+
+    def forward(self, x):
+        linear_output = self.linear(x)
+        out = self.norm(linear_output)
+        return out
+     
 class LinearLayer(nn.Module):
     def __init__(self, embed_dim, hidden_dim):
         super(LinearLayer, self).__init__()
@@ -108,8 +124,8 @@ class CrossAttentionBlock(nn.Module):
         self.cross_attention = CrossAttention(dim_q, dim_kv, num_heads)
         self.linear_block = LinearLayer(dim_q, hidden_dim)
 
-    def forward(self, q, kv, typ):
-        x = self.cross_attention(q, kv, typ)
+    def forward(self, q, kv, txt_tok_len, img_tok_len, typ):
+        x = self.cross_attention(q, kv, txt_tok_len, img_tok_len, typ)
         x = self.linear_block(x)
         return x
     
@@ -121,16 +137,17 @@ class EncoderModel(nn.Module):
             CrossAttentionBlock(dim_q, dim_kv, num_heads, hidden_dim) for _ in range(num_blocks)
         ])
 
-    def forward(self, q, kv, typ):
+    def forward(self, q, kv, txt_tok_len, img_tok_len, typ):
         for block in self.blocks:
-            q = block(q, kv, typ)
-        return q
+            q = block(q, kv, txt_tok_len, img_tok_len, typ)
+        return q.cpu()
 
 # Example usage
 if __name__ == "__main__":
-    q = torch.randn(2, 110, 128)
-    kv = torch.randn(2, 110, 128)
+    q = torch.randn(1, 848, 2048).to("cuda")
+    kv = torch.randn(1, 848, 2048).to("cuda")
     
-    cross_attn = EncoderModel(dim_q=128, dim_kv=128, num_heads=8, num_blocks=8)
-    output = cross_attn(q, kv, typ="trinity")
+    cross_attn = EncoderModel(dim_q=2048, dim_kv=2048, num_heads=8, num_blocks=8)
+    cross_attn = cross_attn.to("cuda")
+    output = cross_attn(q, kv, 77, 771, typ="causal")
     print(output.shape) 
