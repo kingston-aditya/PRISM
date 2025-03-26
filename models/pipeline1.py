@@ -74,9 +74,10 @@ class CrossAttention(nn.Module):
         attn_weights = (q @ k.transpose(-2, -1)) * self.scale
 
         # add causal mask
-        causal_mask = get_mask(txt_tok_len, img_tok_len, typ)
-        causal_mask = causal_mask.to("cuda")
-        attn_weights = attn_weights.masked_fill(causal_mask == 0, float('-inf'))
+        if txt_tok_len != 0 and img_tok_len != 0:
+            causal_mask = get_mask(txt_tok_len, img_tok_len, typ)
+            causal_mask = causal_mask.to("cuda")
+            attn_weights = attn_weights.masked_fill(causal_mask == 0, float('-inf'))
 
         # continue processing
         attn_weights = F.softmax(attn_weights, dim=-1)
@@ -140,14 +141,13 @@ class EncoderModel(nn.Module):
     def forward(self, q, kv, txt_tok_len, img_tok_len, typ):
         for block in self.blocks:
             q = block(q, kv, txt_tok_len, img_tok_len, typ)
-        return q.cpu()
+        return q
 
 # Example usage
 if __name__ == "__main__":
-    q = torch.randn(1, 848, 2048).to("cuda")
-    kv = torch.randn(1, 848, 2048).to("cuda")
+    q = torch.randn(1, 1, 1280)
+    kv = torch.randn(1, 1, 1280)
     
-    cross_attn = EncoderModel(dim_q=2048, dim_kv=2048, num_heads=8, num_blocks=8)
-    cross_attn = cross_attn.to("cuda")
-    output = cross_attn(q, kv, 77, 771, typ="causal")
+    cross_attn = EncoderModel(dim_q=1280, dim_kv=1280, num_heads=8, num_blocks=8)
+    output = cross_attn(q, kv, 0, 0, typ="causal")
     print(output.shape) 

@@ -39,7 +39,8 @@ class TrinityTrainDataset(Dataset):
             "pooled_prompt_embeds": self.temp["pooled_prompt_embeds"][idx],
             "original_sizes": self.temp["original_sizes"][idx],
             "crop_top_lefts": self.temp["crop_top_lefts"][idx],
-            "object_prompt_embeds": self.temp["object_prompt_embeds"][idx]
+            "object_prompt_embeds": self.temp["object_prompt_embeds"][idx],
+            "object_pooled_prompt_embeds": self.temp["object_pooled_prompt_embeds"][idx].reshape(1,-1)
         }
 
     def __len__(self):

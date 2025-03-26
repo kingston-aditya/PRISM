@@ -51,6 +51,20 @@ from .unet_2d_blocks import (
     get_up_block,
 )
 
+import sys
+import pdb as pdb_original
+
+class ForkedPdb(pdb_original.Pdb):
+    """A Pdb subclass that may be used
+    from a forked multiprocessing child
+    """
+    def interaction(self, *args, **kwargs):
+        _stdin = sys.stdin
+        try:
+            sys.stdin = open('/dev/stdin')
+            pdb_original.Pdb.interaction(self, *args, **kwargs)
+        finally:
+            sys.stdin = _stdin
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -975,6 +989,7 @@ class UNet2DConditionModel(
                     f"{self.__class__} has the config param `addition_embed_type` set to 'text_time' which requires the keyword argument `time_ids` to be passed in `added_cond_kwargs`"
                 )
             time_ids = added_cond_kwargs.get("time_ids")
+
             time_embeds = self.add_time_proj(time_ids.flatten())
             time_embeds = time_embeds.reshape((text_embeds.shape[0], -1))
             add_embeds = torch.concat([text_embeds, time_embeds], dim=-1)
