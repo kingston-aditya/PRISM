@@ -1,5 +1,5 @@
 import argparse
-from tasks.data_gen import pipeline6, pipeline7
+from PRISM.dataset.data_create.data_gen import pipeline6, pipeline7
 
 def run_model(args):
     if args.typ == 6:

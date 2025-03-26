@@ -1,4 +1,4 @@
-accelerate launch --multi_gpu /nfshomes/asarkar6/aditya/PRISM/models/train_trinity.py \
+accelerate launch --multi_gpu /nfshomes/asarkar6/aditya/PRISM/models/train_trinity_sdxl.py \
   --pretrained_model_name_or_path="stabilityai/stable-diffusion-xl-base-1.0" \
   --pretrained_vae_model_name_or_path="madebyollin/sdxl-vae-fp16-fix" \
   --dataset_name="/nfshomes/asarkar6/trinity/train_data/" \

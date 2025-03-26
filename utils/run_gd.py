@@ -3,16 +3,22 @@ from PIL import Image
 import cv2
 import numpy as np
 from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
-import sys
-sys.path.insert(1, "/data/aditya/PRISM/")
-from utils.utilities import visualize
+import pdb
 
-class GDINO:
-    def __init__(self, ckpt_path: str | None = None):
+def correct_inputs(imgs, txts):
+    temp = {}
+    for i in range(len(txts)):
+        for j in txts[i].split(","):
+            temp[j] = imgs[i]
+    return temp
+
+class GDINO(object):
+    def __init__(self, args, ckpt_path: str | None = None):
         model_id = "IDEA-Research/grounding-dino-base"
         self.device = "cuda"
-        self.processor = AutoProcessor.from_pretrained(model_id, cache_dir = "/nfshomes/asarkar6/trinity/model_weights/")
-        self.model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id, cache_dir = "/nfshomes/asarkar6/trinity/model_weights/").to(self.device)
+        # cache_dir = args.cache_dir
+        self.processor = AutoProcessor.from_pretrained(model_id, cache_dir = args.cache_dir)
+        self.model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id, cache_dir = args.cache_dir).to(self.device)
 
     def predict(
         self,
@@ -31,23 +37,20 @@ class GDINO:
         results = self.processor.post_process_grounded_object_detection(
             outputs,
             inputs.input_ids,
-            box_threshold=box_threshold,
+            threshold=box_threshold,
             text_threshold=text_threshold,
             target_sizes=[k.size[::-1] for k in pil_images],
         )
         return results
 
-if __name__ == "__main__":
-    gdino_obj = GDINO()
-    img = Image.open("/data/aditya/visuals1/output_image_0.png")
-    print(img.size)
-    labs = ["strawberry", "cucumber"]
-    out = gdino_obj.predict([img, img], labs, 0.3, 0.25,)
-    print(out)
-    for i in out:
-        if len(i['boxes'].cpu().numpy().tolist()) == 0:
-            continue
-        else:
-            temp = i['boxes'].cpu().numpy().tolist()[0]
-            out_img = visualize(img, {"xmin": int(temp[0]), "ymin": int(temp[1]), "xmax": int(temp[2]), "ymax": int(temp[3])})
-            out_img.save("/data/aditya/output_image_"+i["labels"][0]+".png")
+# if __name__ == "__main__":
+#     gdino_obj = GDINO()
+#     img = Image.open("/nfshomes/asarkar6/aditya/generated_image.png")
+#     img1 = Image.open("/nfshomes/asarkar6/trinity/trinity-images/4500.png")
+
+#     imgs = [img, img1]
+#     labs = ["strawberry", "human"]
+#     temp = correct_inputs(imgs, labs)
+
+#     out = gdino_obj.predict(list(temp.values()), list(temp.keys()), 0.3, 0.25,)
+#     pdb.set_trace()
