@@ -1,4 +1,4 @@
-python /nfshomes/asarkar6/aditya/PRISM/dataset/data_gen.py \
+python /nfshomes/asarkar6/aditya/PRISM/dataset/datagen_syn.py \
   --llm_model="Qwen/Qwen2.5-7B-Instruct" \
   --cache_dir="/nfshomes/asarkar6/trinity/model_weights/" \
   --batch_size=2 \

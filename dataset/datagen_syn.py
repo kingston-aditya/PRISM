@@ -1,21 +1,16 @@
 import torch
 from torch.utils.data import DataLoader
-import numpy as np
-import pandas as pd
 import os
-import cv2
 import json
 from PIL import Image
 from tqdm import tqdm
 import argparse
-import pdb
-import math
 
 import warnings
 warnings.filterwarnings("ignore")
 
-from realimages import CC3m_data
 from sharegpt_dataloader import ShareGPT, Get_Caps, Caps_Nouns_Filenames
+from utils import correct_inputs, pretty_output, dynamic_collate, dynamic_collate_1
 
 import sys
 sys.path.insert(1, "/nfshomes/asarkar6/aditya/PRISM/")
@@ -90,47 +85,7 @@ def parse_args(input_args=None):
 
     return args
 
-def dynamic_collate(batch):
-    it = [item for item in batch]
-    return it
-
-def dynamic_collate_1(batch):
-    it_nouns = [item["nouns"] for item in batch]
-    it_imgs = [item["images"] for item in batch]
-
-    return {
-        "nouns": it_nouns,
-        "images": it_imgs
-    }
-
-def correct_inputs(imgs, txts):
-    temp = {}
-    for i in range(len(txts)):
-        for j in txts[i].split(","):
-            temp[j] = imgs[i]
-    return temp
-
-def pretty_output(bbox_lst, filname_lst, noun_lst, cap_lst, f):
-    k = 0
-    for i in range(len(noun_lst)):
-        object_temp = bbox_lst[k:k+len(noun_lst[i].split(","))]
-        atema = []
-        for item in object_temp:
-            if len(item['scores'].cpu().tolist()) !=0:
-                xmin = math.ceil(np.asarray(item["boxes"].to("cpu"))[0][0])
-                ymin = math.ceil(np.asarray(item["boxes"].to("cpu"))[0][1])
-                xmax = math.ceil(np.asarray(item["boxes"].to("cpu"))[0][2])
-                ymax = math.ceil(np.asarray(item["boxes"].to("cpu"))[0][3])
-                labels = item["labels"][0]
-                filname = str(filname_lst[i])
-                atema.append({"xmin": xmin, "ymin": ymin, "xmax": xmax, "ymax": ymax, "labels": labels, "img_pth": filname})
-            else:
-                pass
-        temp = {"file_name": filname_lst[i], "prompt": cap_lst[i], "object": atema}
-        k += len(noun_lst[i].split(","))
-        f.write(json.dumps(temp) + '\n')
-
-class pipeline6(object):
+class generate_syn_data(object):
     def __init__(self, json_pth, args):
         if args.total_length_yes == "True":
             self.caps_dataset = ShareGPT(json_pth, -1) 
@@ -213,6 +168,6 @@ if __name__ == "__main__":
     # for pipeline 5
     args = parse_args()
     json_pth = "/nfshomes/asarkar6/trinity/sharegpt4v/share-captioner_coco_lcs_sam_1246k_1107.json"
-    pipeline6(json_pth, args).forward()
+    generate_syn_data(json_pth, args).forward()
 
 
