@@ -12,7 +12,7 @@ def correct_inputs(imgs, txts):
     return temp
 
 class GDINO(object):
-    def __init__(self, args, ckpt_path: str | None = None):
+    def __init__(self, args):
         model_id = "IDEA-Research/grounding-dino-base"
         self.device = "cuda"
         # cache_dir = args.cache_dir
