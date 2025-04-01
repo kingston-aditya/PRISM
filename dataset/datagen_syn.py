@@ -17,8 +17,8 @@ config1 = get_config()
 
 import sys
 sys.path.insert(1, config1["repo_path"])
-from utils import run_gd, run_llm
-from utils.run_diff import run_sdxl, run_flux
+from utilities import run_gd, run_llm
+from utilities.run_diff import run_sdxl, run_flux
 
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
