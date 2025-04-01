@@ -1,5 +1,5 @@
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, SubsetRandomSampler
 import os
 import json
 from PIL import Image
@@ -52,6 +52,12 @@ def parse_args(input_args=None):
         help="Batch size",
     )
     parser.add_argument(
+        "--total_length",
+        type=int,
+        default=1024,
+        help="Batch size",
+    )
+    parser.add_argument(
         "--dataloader_num_workers",
         type=int,
         default=12,
@@ -85,12 +91,17 @@ class generate_real_data(object):
     def forward(self):
         # Task 1 - Save the images.
         cn = {"captions": [], "nouns": []}
+
+        indices = list(range(self.args.total_length)) 
+        sampler = SubsetRandomSampler(indices)
+
         dtel = DataLoader(
             self.pil_dataset,
             shuffle=False,
             batch_size = self.args.batch_size,
             collate_fn=dynamic_collate,
             num_workers=self.args.dataloader_num_workers,
+            sampler = sampler,
         )
         print(len(dtel))
         k = 0
