@@ -25,7 +25,7 @@ class run_flux(object):
         self.pipe.to(self.device)
 
     def forward(self, prt):
-        img = self.pipe(prt, height=768, width=768, num_inference_steps=50).images[0]
+        img = self.pipe(prompt = prt, height=512, width=512, num_inference_steps=50).images
         return img
 
 if __name__ == "__main__":

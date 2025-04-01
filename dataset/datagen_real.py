@@ -13,8 +13,11 @@ from cc3m_dataloader import return_cc3_train_dataset
 from sharegpt_dataloader import Caps_Nouns_Filenames
 from utils import correct_inputs, pretty_output, dynamic_collate, dynamic_collate_1
 
+from config import get_config
+config1 = get_config()
+
 import sys
-sys.path.insert(1, "/nfshomes/asarkar6/aditya/PRISM/")
+sys.path.insert(1, config1["repo_path"])
 from utils import run_gd, run_llm, run_mllm
 
 import os
