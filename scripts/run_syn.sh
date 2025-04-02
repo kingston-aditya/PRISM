@@ -1,10 +1,1 @@
-python /nfshomes/asarkar6/aditya/PRISM/dataset/datagen_syn.py \
-  --llm_model="Qwen/Qwen2.5-72B-Instruct" \
-  --cache_dir="/nfshomes/asarkar6/trinity/model_weights/" \
-  --batch_size=2 \
-  --total_length_yes="False" \
-  --total_length_no=2000000 \
-  --dataloader_num_workers=12 \
-  --is_sdxl="False" \
-  --output_img_folder="/nfshomes/asarkar6/trinity/finale_data/images" \
-  --output_metadata_folder="/nfshomes/asarkar6/trinity/finale_data/"
+python dataset/datagen_syn.py --llm_model="Qwen/Qwen2.5-72B-Instruct" --cache_dir=cache_dir --batch_size=2 --total_length_yes="False" --total_length_no=10  --dataloader_num_workers=2 --is_sdxl="True" --output_img_folder=output_image_dir --output_metadata_folder=output_metadata_dir
