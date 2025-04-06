@@ -1,11 +1,12 @@
 import math
 import numpy as np
 import json
+from PIL import Image
 
 def correct_inputs(imgs, txts):
     temp = {}
     for i in range(len(txts)):
-        for j in txts[i].split(","):
+        for j in txts[i].split(",")[:3]:
             temp[j] = imgs[i]
     return temp
 
@@ -25,7 +26,7 @@ def pretty_output(bbox_lst, filname_lst, noun_lst, cap_lst, f):
                 atema.append({"xmin": xmin, "ymin": ymin, "xmax": xmax, "ymax": ymax, "labels": labels, "img_pth": filname})
             else:
                 pass
-        temp = {"file_name": filname_lst[i], "prompt": cap_lst[i], "object": atema}
+        temp = {"file_name": filname_lst[i], "prompt": cap_lst[i], "object": atema[:3]}
         k += len(noun_lst[i].split(","))
         f.write(json.dumps(temp) + '\n')
 
@@ -36,6 +37,15 @@ def dynamic_collate(batch):
 def dynamic_collate_1(batch):
     it_nouns = [item["nouns"] for item in batch]
     it_imgs = [item["images"] for item in batch]
+
+    return {
+        "nouns": it_nouns,
+        "images": it_imgs
+    }
+
+def dynamic_collate_2(batch):
+    it_nouns = [item["nouns"] for item in batch]
+    it_imgs = [Image.open(item["images"]) for item in batch]
 
     return {
         "nouns": it_nouns,

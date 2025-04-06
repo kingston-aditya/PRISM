@@ -1,5 +1,5 @@
 import torch
-from torch.utils.data import DataLoader, SubsetRandomSampler
+from torch.utils.data import DataLoader, Subset
 import os
 import json
 from PIL import Image
@@ -52,10 +52,16 @@ def parse_args(input_args=None):
         help="Batch size",
     )
     parser.add_argument(
-        "--total_length",
+        "--start_len",
+        type=int,
+        default=0,
+        help="Starting length",
+    )
+    parser.add_argument(
+        "--end_len",
         type=int,
         default=1024,
-        help="Batch size",
+        help="Ending length",
     )
     parser.add_argument(
         "--dataloader_num_workers",
@@ -89,56 +95,57 @@ class generate_real_data(object):
         self.args = args
 
     def forward(self):
-        # Task 1 - Save the images.
-        cn = {"captions": [], "nouns": []}
+        # Task 1 - Read the images.
+        cn = {"captions": {}, "nouns": {}}
 
-        indices = list(range(self.args.total_length)) 
-        sampler = SubsetRandomSampler(indices)
+        indices = list(range(self.args.start_len, self.args.end_len)) 
+        subset_data = Subset(self.pil_dataset, indices)
 
         dtel = DataLoader(
-            self.pil_dataset,
+            subset_data,
             shuffle=False,
             batch_size = self.args.batch_size,
             collate_fn=dynamic_collate,
             num_workers=self.args.dataloader_num_workers,
-            sampler = sampler,
         )
-        print(len(dtel))
-        k = 0
-        img_dataset = {"file_name":[], "images": []}
-        fil_name = []
+        print("Number of batches", len(dtel), "Total size", len(dtel)*self.args.batch_size)
+        k = 0; k1=0
+        img_dataset = {"file_name":{}, "images": {}}
+        fil_name = {}
         for batch in dtel:
-            temp = []
+            temp = {}
             for img in batch:
                 img.save(os.path.join(self.args.output_img_folder, str(k)+".png"))
-                temp.append(os.path.join(self.args.output_img_folder, str(k)+".png"))
-                img_dataset["file_name"].append(os.path.join(self.args.output_img_folder, str(k)+".png"))
-                img_dataset["images"].append(img)
+                temp[k] = os.path.join(self.args.output_img_folder, str(k)+".png")
+                img_dataset["file_name"][k] = os.path.join(self.args.output_img_folder, str(k)+".png")
+                img_dataset["images"][k] = img
                 k += 1
-            fil_name.append(temp)
+            k1+=1
+            fil_name[k1] = list(temp.values())
 
         # Task 2 - Get detailed captions
         self.qwen_model = run_mllm.run_quen2_vl(self.args)
-        caps_lst = []
+        cn = {"captions": {}, "nouns": {}}
+        k=0
         for batch in fil_name:
             caps = self.qwen_model.forward(batch)
-            caps_lst.append(caps)
+            cn["captions"][k] = caps
         del self.qwen_model
+        torch.cuda.empty_cache()
 
         # Task 3 - get the nouns and captions.
-        cn = {"captions": [], "nouns": []}
+        k=0
         self.llm_obj = run_llm.run_qwen(self.args)
-        for batch in tqdm(caps_lst, desc="Processing"):
-            short_caps = self.llm_obj.get_summary(batch)
-            nouns = self.llm_obj.get_nouns(short_caps)
-            cn["captions"].append(short_caps)
-            cn["nouns"].append(nouns)
+        for batch in tqdm(list(cn["captions"].values()), desc="Processing"):
+            nouns = self.llm_obj.get_nouns(batch)
+            cn["nouns"][k] = nouns
+            k+=1
         del self.llm_obj, dtel
         torch.cuda.empty_cache()
 
         # Task 4 - get the objects
         self.GD = run_gd.GDINO(args)
-        get_caps_nouns_filenames = Caps_Nouns_Filenames([j for i in cn["nouns"] for j in i], [k for k in img_dataset["images"]])
+        get_caps_nouns_filenames = Caps_Nouns_Filenames([j for i in cn["nouns"].values() for j in i], [k for k in img_dataset["images"].values()])
         dtel = DataLoader(
             get_caps_nouns_filenames,
             shuffle=False,
@@ -146,24 +153,26 @@ class generate_real_data(object):
             collate_fn=dynamic_collate_1,
             num_workers=self.args.dataloader_num_workers,
         )
-        fin_out = []
+        fin_out = {}
+        k=0
         for batch in tqdm(dtel, desc="processing"):
             temp = correct_inputs(batch["images"], batch["nouns"])
             out = self.GD.predict(list(temp.values()), list(temp.keys()), 0.3, 0.25,)
-            fin_out.append(out)
+            fin_out[k] = out
+            k+=1
         
         f = open(os.path.join(self.args.output_metadata_folder, "metadata.jsonl"), "w")
-        bbox_lst = [j for i in fin_out for j in i]
-        filname_lst = [j for j in img_dataset["file_name"]]
-        noun_lst = [j for i in cn["nouns"] for j in i]
-        caps_lst = [j for i in cn["captions"] for j in i]
+        bbox_lst = [j for i in fin_out.values() for j in i]
+        filname_lst = [j for j in img_dataset["file_name"].values()]
+        noun_lst = [j for i in cn["nouns"].values() for j in i]
+        caps_lst = [j for i in cn["captions"].values() for j in i]
         pretty_output(bbox_lst, filname_lst, noun_lst, caps_lst, f)
         f.close()
 
 if __name__ == "__main__":
     # for pipeline 5
     args = parse_args()
-    json_pth = "path_to_cc3m"
+    json_pth = "path_to_cc12m"
     generate_real_data(json_pth, args).forward()
 
 

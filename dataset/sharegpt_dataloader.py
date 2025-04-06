@@ -3,7 +3,7 @@ from torch.utils.data import Dataset
 import json
 
 class ShareGPT(Dataset):
-    def __init__(self, json_pth, num):
+    def __init__(self, json_pth, num1, num2):
         # read json objects
         f = open(json_pth, "r")
         self.json_obj = json.load(f)
@@ -17,8 +17,8 @@ class ShareGPT(Dataset):
                 self.caps.append(j)
         
         # determine the number of captions
-        if num!=-1:
-            self.caps = self.caps[:num]
+        if num1!=num2:
+            self.caps = self.caps[num1:num2]
         
     def __getitem__(self, idx):
         return self.caps[idx]

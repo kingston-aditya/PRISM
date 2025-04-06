@@ -11,7 +11,7 @@ def message_maker(batch):
                 "role": "user",
                 "content": [
                     {"type": "image", "image": item},
-                    {"type": "text", "text": "Caption this image in detail. Caption should be less than 40 words."},
+                    {"type": "text", "text": "Caption this image. Caption should be less than 20 words."},
                 ],
             }
         ]

@@ -46,10 +46,10 @@ class run_qwen(object):
         response2 = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
         return [i.split('\n')[-1] for i in response2]
 
-if __name__ == "__main__":
-    prt = ["A cat and a dog playing in a park.", "Two busses travelling on street."]
-    args = {"model_name": "Qwen/Qwen2.5-7B-Instruct", "cache_dir": "/nfshomes/asarkar6/trinity/model_weights/"}
-    llm_obj = run_qwen(args)
-    r1 = llm_obj.get_summary(prt)
-    r2 = llm_obj.get_nouns(r1)
-    pdb.set_trace()
+# if __name__ == "__main__":
+#     prt = ["A cat and a dog playing in a park.", "Two busses travelling on street."]
+#     args = {"model_name": "Qwen/Qwen2.5-7B-Instruct", "cache_dir": "/nfshomes/asarkar6/trinity/model_weights/"}
+#     llm_obj = run_qwen(args)
+#     r1 = llm_obj.get_summary(prt)
+#     r2 = llm_obj.get_nouns(r1)
+#     pdb.set_trace()
