@@ -184,7 +184,7 @@ class generate_syn_data(object):
 if __name__ == "__main__":
     # for pipeline 5
     args = parse_args()
-    json_pth = "/nfshomes/asarkar6/trinity/sharegpt4v/share-captioner_coco_lcs_sam_1246k_1107.json"
+    json_pth = config1["data_path"]
     generate_syn_data(json_pth, args).forward()
 
 
