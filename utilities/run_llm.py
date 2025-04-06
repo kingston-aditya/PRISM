@@ -23,7 +23,7 @@ def make_message_qwen(batch,typ):
 class run_qwen(object):
     def __init__(self, args):
         self.device = "cuda"
-        self.model = AutoModelForCausalLM.from_pretrained(args.llm_model, device_map=self.device, cache_dir = args.cache_dir, torch_dtype=torch.float16)
+        self.model = AutoModelForCausalLM.from_pretrained(args.llm_model, device_map="auto", cache_dir = args.cache_dir, torch_dtype=torch.float16)
         self.tokenizer = AutoTokenizer.from_pretrained(args.llm_model, cache_dir = args.cache_dir)
 
     def get_summary(self, prt):

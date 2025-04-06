@@ -1,4 +1,4 @@
 def get_config():
     return {
-        "repo_path": "/home/shlokmishra/code/PRISM"
+        "repo_path": "/nfshomes/asarkar6/aditya/PRISM/"
     }

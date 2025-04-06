@@ -98,7 +98,7 @@ class generate_syn_data(object):
         
     def forward(self):
         # task 1 - get the nouns and captions
-        cn = {"captions": [], "nouns": []}
+        cn = {"captions": {}, "nouns": {}}
         dtel = DataLoader(
             self.caps_dataset,
             shuffle=True,
@@ -106,23 +106,32 @@ class generate_syn_data(object):
             collate_fn=dynamic_collate,
             num_workers=self.args.dataloader_num_workers,
         )
-        print(len(dtel))
+        print("Number of batches", len(dtel), "Total size", len(dtel)*self.args.batch_size)
         self.llm_obj = run_llm.run_qwen(self.args)
+        k = 0
         for batch in tqdm(dtel, desc="Processing"):
             caps = self.llm_obj.get_summary(batch)
             nouns = self.llm_obj.get_nouns(caps)
-            cn["captions"].append(caps)
-            cn["nouns"].append(nouns)
+            # saving for further processing
+            cn["captions"][k] = caps
+            cn["nouns"][k] = nouns
+            # update counter
+            k+=1
+            del caps, nouns
         del self.llm_obj, dtel, self.caps_dataset
         torch.cuda.empty_cache()
-        
+
+        # flushing intermediate output
+        with open(os.path.join(self.args.output_metadata_folder, "temp_caps.json"), 'w') as json_file:
+            json.dump(cn["captions"], json_file, indent=4)
+
         # task 2 - get the images
         if self.args.is_sdxl == "True":
             self.diff_obj = run_sdxl(self.args)
         else:
             self.diff_obj = run_flux(self.args)
         
-        get_caps = Get_Caps([i for j in cn["captions"] for i in j])
+        get_caps = Get_Caps([i for j in cn["captions"].values() for i in j])
         dtel = DataLoader(
             get_caps,
             shuffle=False,
@@ -132,20 +141,21 @@ class generate_syn_data(object):
         )
 
         k = 0
-        img_dataset = {"file_name":[], "images": []}
+        img_dataset = {"file_name":{}, "images": {}}
         for batch in dtel:
             img_gen = self.diff_obj.forward(batch)
             for img in img_gen:
                 k+=1
                 img.save(os.path.join(self.args.output_img_folder, str(k)+".png"))
-                img_dataset["file_name"].append(os.path.join(self.args.output_img_folder, str(k)+".png"))
-                img_dataset["images"].append(img)
+                img_dataset["file_name"][k] = os.path.join(self.args.output_img_folder, str(k)+".png")
+                img_dataset["images"][k] = img
+            del img_gen
         del self.diff_obj, dtel, get_caps
         torch.cuda.empty_cache()
         
         # task 3 - get the objects
         self.GD = run_gd.GDINO(args)
-        get_caps_nouns_filenames = Caps_Nouns_Filenames([j for i in cn["nouns"] for j in i], [k for k in img_dataset["images"]])
+        get_caps_nouns_filenames = Caps_Nouns_Filenames([j for i in cn["nouns"].values() for j in i], [k for k in img_dataset["images"].values()])
         dtel = DataLoader(
             get_caps_nouns_filenames,
             shuffle=False,
@@ -153,17 +163,21 @@ class generate_syn_data(object):
             collate_fn=dynamic_collate_1,
             num_workers=self.args.dataloader_num_workers,
         )
-        fin_out = []
+        fin_out = {}
+        k = 0
         for batch in tqdm(dtel, desc="processing"):
             temp = correct_inputs(batch["images"], batch["nouns"])
             out = self.GD.predict(list(temp.values()), list(temp.keys()), 0.3, 0.25,)
-            fin_out.append(out)
+            fin_out[k] = out
+            k+=1
+        del dtel, self.GD
+        torch.cuda.empty_cache()
         
         f = open(os.path.join(self.args.output_metadata_folder, "metadata.jsonl"), "w")
-        bbox_lst = [j for i in fin_out for j in i]
-        filname_lst = [j for j in img_dataset["file_name"]]
-        noun_lst = [j for i in cn["nouns"] for j in i]
-        caps_lst = [j for i in cn["captions"] for j in i]
+        bbox_lst = [j for i in fin_out.values() for j in i]
+        filname_lst = [j for j in img_dataset["file_name"].values()]
+        noun_lst = [j for i in cn["nouns"].values() for j in i]
+        caps_lst = [j for i in cn["captions"].values() for j in i]
         pretty_output(bbox_lst, filname_lst, noun_lst, caps_lst, f)
         f.close()
 

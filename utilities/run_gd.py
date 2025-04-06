@@ -12,7 +12,7 @@ def correct_inputs(imgs, txts):
     return temp
 
 class GDINO(object):
-    def __init__(self, args, ckpt_path: str | None = None):
+    def __init__(self, args):
         model_id = "IDEA-Research/grounding-dino-base"
         self.device = "cuda"
         # cache_dir = args.cache_dir
@@ -21,11 +21,11 @@ class GDINO(object):
 
     def predict(
         self,
-        pil_images: list[Image.Image],
-        text_prompt: list[str],
-        box_threshold: float,
-        text_threshold: float,
-    ) -> list[dict]:
+        pil_images,
+        text_prompt,
+        box_threshold,
+        text_threshold,
+    ):
         for i, prompt in enumerate(text_prompt):
             if prompt[-1] != ".":
                 text_prompt[i] += "."
