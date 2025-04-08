@@ -1,10 +1,10 @@
 import torch
 from torch.utils.data import DataLoader, Subset
 import os
-import json
-from PIL import Image
 from tqdm import tqdm
 import argparse
+import time
+import json
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -18,7 +18,8 @@ config1 = get_config()
 
 import sys
 sys.path.insert(1, config1["repo_path"])
-from utils import run_gd, run_llm, run_mllm
+from utilities import run_gd, run_llm, run_mllm
+import pdb 
 
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -95,6 +96,7 @@ class generate_real_data(object):
         self.args = args
 
     def forward(self):
+        start_time = time.time()
         # Task 1 - Read the images.
         cn = {"captions": {}, "nouns": {}}
 
@@ -122,16 +124,22 @@ class generate_real_data(object):
                 k += 1
             k1+=1
             fil_name[k1] = list(temp.values())
+        end_time = time.time()
+        print(f"Total runtime of the TASK 3 is {end_time - start_time}") 
 
         # Task 2 - Get detailed captions
-        self.qwen_model = run_mllm.run_quen2_vl(self.args)
+        fil_name = {1:["/nfshomes/asarkar6/aditya/generated_image.png", "/nfshomes/asarkar6/aditya/generated_image.png"], 2:["/nfshomes/asarkar6/aditya/generated_image.png", "/nfshomes/asarkar6/aditya/generated_image.png"]}
+        self.qwen_model = run_mllm.run_qwen2_vl(self.args)
         cn = {"captions": {}, "nouns": {}}
         k=0
-        for batch in fil_name:
+        for batch in fil_name.values():
             caps = self.qwen_model.forward(batch)
             cn["captions"][k] = caps
+            k+=1
         del self.qwen_model
         torch.cuda.empty_cache()
+        end_time = time.time()
+        print(f"Total runtime of the TASK 2 is {end_time - start_time}") 
 
         # Task 3 - get the nouns and captions.
         k=0
@@ -140,8 +148,14 @@ class generate_real_data(object):
             nouns = self.llm_obj.get_nouns(batch)
             cn["nouns"][k] = nouns
             k+=1
-        del self.llm_obj, dtel
+        del self.llm_obj
         torch.cuda.empty_cache()
+        end_time = time.time()
+        print(f"Total runtime of the TASK 3 is {end_time - start_time}") 
+
+        # flushing intermediate output
+        with open(os.path.join(self.args.output_metadata_folder, "temp_captions.json"), 'w') as json_file:
+            json.dump(cn, json_file, indent=4)
 
         # Task 4 - get the objects
         self.GD = run_gd.GDINO(args)
@@ -160,7 +174,12 @@ class generate_real_data(object):
             out = self.GD.predict(list(temp.values()), list(temp.keys()), 0.3, 0.25,)
             fin_out[k] = out
             k+=1
-        
+        end_time = time.time()
+        print(f"Total runtime of the TASK4 is {end_time - start_time}") 
+        # flushing intermediate output
+        with open(os.path.join(self.args.output_metadata_folder, "temp_boxes.json"), 'w') as json_file:
+            json.dump(fin_out, json_file, indent=4)
+
         f = open(os.path.join(self.args.output_metadata_folder, "metadata.jsonl"), "w")
         bbox_lst = [j for i in fin_out.values() for j in i]
         filname_lst = [j for j in img_dataset["file_name"].values()]
@@ -168,11 +187,12 @@ class generate_real_data(object):
         caps_lst = [j for i in cn["captions"].values() for j in i]
         pretty_output(bbox_lst, filname_lst, noun_lst, caps_lst, f)
         f.close()
+        end_time = time.time()
+        print(f"Total runtime is {end_time - start_time}") 
 
 if __name__ == "__main__":
     # for pipeline 5
     args = parse_args()
-    json_pth = "path_to_cc12m"
-    generate_real_data(json_pth, args).forward()
+    generate_real_data(args).forward()
 
 

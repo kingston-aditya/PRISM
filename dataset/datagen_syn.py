@@ -2,9 +2,9 @@ import torch
 from torch.utils.data import DataLoader
 import os
 import json
-from PIL import Image
 from tqdm import tqdm
 import argparse
+import time
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -103,6 +103,7 @@ class generate_syn_data(object):
         self.args = args
         
     def forward(self):
+        start_time = time.time()
         # task 1 - get the nouns and captions
         cn = {"captions": {}, "nouns": {}}
         dtel = DataLoader(
@@ -192,6 +193,8 @@ class generate_syn_data(object):
         caps_lst = [j for i in cn["captions"].values() for j in i]
         pretty_output(bbox_lst, filname_lst, noun_lst, caps_lst, f)
         f.close()
+        end_time = time.time()
+        print(f"Total RUNTIME is {end_time - start_time}") 
 
 if __name__ == "__main__":
     # for pipeline 5
