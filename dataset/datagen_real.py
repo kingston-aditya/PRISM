@@ -11,7 +11,7 @@ warnings.filterwarnings("ignore")
 
 from cc3m_dataloader import return_cc3_train_dataset
 from sharegpt_dataloader import Caps_Nouns_Filenames
-from utils import correct_inputs, pretty_output, dynamic_collate, dynamic_collate_1
+from utils import correct_inputs, pretty_output, dynamic_collate_3, dynamic_collate_1
 
 from config import get_config
 config1 = get_config()
@@ -71,6 +71,12 @@ def parse_args(input_args=None):
         help="Number of workers",
     )
     parser.add_argument(
+        "--input_data_dir",
+        type=str,
+        default="/nfshomes/asarkar6/trinity/finale_data/images",
+        help="Batch size",
+    )
+    parser.add_argument(
         "--output_img_folder",
         type=str,
         default="/nfshomes/asarkar6/trinity/finale_data/images",
@@ -107,10 +113,12 @@ class generate_real_data(object):
             subset_data,
             shuffle=False,
             batch_size = self.args.batch_size,
-            collate_fn=dynamic_collate,
+            collate_fn=dynamic_collate_3,
             num_workers=self.args.dataloader_num_workers,
         )
         print("Number of batches", len(dtel), "Total size", len(dtel)*self.args.batch_size)
+        pdb.set_trace()
+        
         k = 0; k1=0
         img_dataset = {"file_name":{}, "images": {}}
         fil_name = {}
@@ -125,10 +133,10 @@ class generate_real_data(object):
             k1+=1
             fil_name[k1] = list(temp.values())
         end_time = time.time()
-        print(f"Total runtime of the TASK 3 is {end_time - start_time}") 
+        pdb.set_trace()
+        print(f"Total runtime of the TASK 1 is {end_time - start_time}") 
 
         # Task 2 - Get detailed captions
-        fil_name = {1:["/nfshomes/asarkar6/aditya/generated_image.png", "/nfshomes/asarkar6/aditya/generated_image.png"], 2:["/nfshomes/asarkar6/aditya/generated_image.png", "/nfshomes/asarkar6/aditya/generated_image.png"]}
         self.qwen_model = run_mllm.run_qwen2_vl(self.args)
         cn = {"captions": {}, "nouns": {}}
         k=0

@@ -1,10 +1,11 @@
-python /nfshomes/asarkar6/aditya/PRISM/dataset/datagen_real.py \
+python /data/aditya/PRISM/dataset/datagen_real.py \
   --llm_model="Qwen/Qwen2.5-7B-Instruct" \
   --mllm_model="Qwen/Qwen2.5-VL-7B-Instruct" \
-  --cache_dir="/nfshomes/asarkar6/trinity/model_weights/" \
+  --cache_dir="/mnt/ssd/" \
   --start_len=0 \
   --end_len=512 \
   --batch_size=2 \
   --dataloader_num_workers=2 \
-  --output_img_folder="/nfshomes/asarkar6/trinity/finale_data/images" \
-  --output_metadata_folder="/nfshomes/asarkar6/trinity/finale_data/"
+  --input_data_dir="/mnt/ssd/" \
+  --output_img_folder="/mnt/ssd/images/" \
+  --output_metadata_folder="/mnt/ssd/"

@@ -51,3 +51,7 @@ def dynamic_collate_2(batch):
         "nouns": it_nouns,
         "images": it_imgs
     }
+
+def dynamic_collate_3(batch):
+    it = [item['image'] for item in batch]
+    return it

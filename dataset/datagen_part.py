@@ -111,7 +111,7 @@ class generate_part_data(object):
         torch.cuda.empty_cache()
 
         # task 2 - get the filenames
-        filnames = sorted(os.path.listdir(os.path.join(self.args.output_metadata_folder, "images")))
+        filnames = sorted(os.path.listdir(self.args.output_image_folder), key=lambda x: int(x.split('.')[0]))
         
         # task 3 - get the objects
         self.GD = run_gd.GDINO(args)
