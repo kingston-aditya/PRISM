@@ -131,14 +131,14 @@ class generate_real_data(object):
         pdb.set_trace()
 
         # Task 2 - Get detailed captions
-        self.qwen_model = run_mllm.run_florence(self.args)
+        self.mllm_obj = run_mllm.run_florence(self.args)
         cn = {"captions": {}, "nouns": {}}
         k=0
         for batch in dtel:
-            caps = self.qwen_model.forward(batch)
+            caps = self.mllm_obj.forward(batch)
             cn["captions"][k] = caps
             k+=1
-        del self.qwen_model
+        del self.mllm_obj
         torch.cuda.empty_cache()
         end_time = time.time()
         print(f"Total runtime of the TASK 2 is {end_time - start_time}") 
