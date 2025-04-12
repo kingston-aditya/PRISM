@@ -117,7 +117,6 @@ class generate_real_data(object):
             num_workers=self.args.dataloader_num_workers,
         )
         print("Number of batches", len(dtel), "Total size", len(dtel)*self.args.batch_size)
-        pdb.set_trace()
         
         k = 0; k1=0
         img_dataset = {"file_name":{}, "images": {}}
@@ -133,7 +132,6 @@ class generate_real_data(object):
             k1+=1
             fil_name[k1] = list(temp.values())
         end_time = time.time()
-        pdb.set_trace()
         print(f"Total runtime of the TASK 1 is {end_time - start_time}") 
 
         # Task 2 - Get detailed captions
@@ -184,9 +182,6 @@ class generate_real_data(object):
             k+=1
         end_time = time.time()
         print(f"Total runtime of the TASK4 is {end_time - start_time}") 
-        # flushing intermediate output
-        with open(os.path.join(self.args.output_metadata_folder, "temp_boxes.json"), 'w') as json_file:
-            json.dump(fin_out, json_file, indent=4)
 
         f = open(os.path.join(self.args.output_metadata_folder, "metadata.jsonl"), "w")
         bbox_lst = [j for i in fin_out.values() for j in i]
