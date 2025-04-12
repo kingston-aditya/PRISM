@@ -4,6 +4,7 @@ import torch
 import PIL
 import os
 import io
+import math
 # import pdb
 
 def t2i_process_fn(batch):
@@ -27,7 +28,8 @@ def t2i_process_fn(batch):
     # return batch["image"], batch["caption"]
 
 def return_cc3_train_dataset(args):
-    data_files = glob(os.path.join(args.input_data_dir, "*.tar"))
+    num_files = math.ceil((args.end_len - args.start_len)/5045)
+    data_files = glob(os.path.join(args.input_data_dir, "*.tar"))[:num_files]
     train_dataset = load_dataset(
         "webdataset",
         data_files=data_files,

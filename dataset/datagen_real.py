@@ -128,6 +128,7 @@ class generate_real_data(object):
                 k += 1
         end_time = time.time()
         print(f"Total runtime of the TASK 1 is {end_time - start_time}") 
+        pdb.set_trace()
 
         # Task 2 - Get detailed captions
         self.qwen_model = run_mllm.run_florence(self.args)
