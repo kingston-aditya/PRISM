@@ -118,27 +118,22 @@ class generate_real_data(object):
         )
         print("Number of batches", len(dtel), "Total size", len(dtel)*self.args.batch_size)
         
-        k = 0; k1=0
+        k = 0
         img_dataset = {"file_name":{}, "images": {}}
-        fil_name = {}
         for batch in dtel:
-            temp = {}
             for img in batch:
                 img.save(os.path.join(self.args.output_img_folder, str(k)+".png"))
-                temp[k] = os.path.join(self.args.output_img_folder, str(k)+".png")
                 img_dataset["file_name"][k] = os.path.join(self.args.output_img_folder, str(k)+".png")
                 img_dataset["images"][k] = img
                 k += 1
-            k1+=1
-            fil_name[k1] = list(temp.values())
         end_time = time.time()
         print(f"Total runtime of the TASK 1 is {end_time - start_time}") 
 
         # Task 2 - Get detailed captions
-        self.qwen_model = run_mllm.run_qwen2_vl(self.args)
+        self.qwen_model = run_mllm.run_florence(self.args)
         cn = {"captions": {}, "nouns": {}}
         k=0
-        for batch in fil_name.values():
+        for batch in dtel:
             caps = self.qwen_model.forward(batch)
             cn["captions"][k] = caps
             k+=1

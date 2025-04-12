@@ -1,7 +1,16 @@
-from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
-from qwen_vl_utils import process_vision_info
+from transformers import AutoProcessor, AutoModelForCausalLM 
 import pdb
 import torch
+from PIL import Image
+
+def parser(caps):
+    temp={}
+    k=0
+    for item in caps:
+        t = item.split(".")[0].split(">")[-1]+'.'
+        temp[k] = t
+        k+=1
+    return list(temp.values())
 
 def message_maker(batch):
     temp = []
@@ -20,12 +29,11 @@ def message_maker(batch):
 
 class run_qwen2_vl(object):
     # , args
-    def __init__(self, args):
+    def __init__(self):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            args.mllm_model, torch_dtype="auto", cache_dir = args.cache_dir, device_map="auto"
-        )
-        self.processor = AutoProcessor.from_pretrained(args.mllm_model)
+            "Qwen/Qwen2.5-VL-7B-Instruct", torch_dtype=torch.float16, cache_dir = "/nfshomes/asarkar6/trinity/model_weights", device_map="auto")
+        self.processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct")
 
     def forward(self, img_pths):
         messages = message_maker(img_pths)
@@ -54,13 +62,31 @@ class run_qwen2_vl(object):
         )
         output_texts[0] = output_texts[0].split("\n")[-1]
         return output_texts
-        
+    
+class run_florence(object):
+    def __init__(self, args):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = AutoModelForCausalLM.from_pretrained("microsoft/Florence-2-large", trust_remote_code=True, torch_dtype=torch.float16, cache_dir = args.cache_dir).to(self.device)
+        self.processor = AutoProcessor.from_pretrained("microsoft/Florence-2-large", trust_remote_code=True)
+
+    def forward(self, img_input):
+        prompt = ["<CAPTION>"]*len(img_input)
+        inputs = self.processor(text=prompt, images=img_input, return_tensors="pt").to(self.device, torch.float16)
+        generated_ids = self.model.generate(
+            input_ids=inputs["input_ids"],
+            pixel_values=inputs["pixel_values"],
+            max_new_tokens=1024,
+            num_beams=3
+            )
+        generated_text = self.processor.batch_decode(generated_ids, skip_special_tokens=False)
+        parsed_text = parser(generated_text)
+        return parsed_text
 
 if __name__ == "__main__":
-    mllm_obj = run_qwen2_vl()
-    img = "/nfshomes/asarkar6/aditya/generated_image.png"
-    img1 = "/nfshomes/asarkar6/trinity/trinity-images/4500.png"
-    imgs = [img, img1]
+    img = Image.open("/nfshomes/asarkar6/aditya/test_image.png")
+    img1 = Image.open("/nfshomes/asarkar6/trinity/trinity-images/4500.png")
+    imgs = [img, img1]*5
+    mllm_obj = run_florence()
     caps = mllm_obj.forward(imgs)
     print(len(caps), caps)
     pdb.set_trace()

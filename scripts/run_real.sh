@@ -4,7 +4,7 @@ python /data/aditya/PRISM/dataset/datagen_real.py \
   --cache_dir="/mnt/ssd/" \
   --start_len=0 \
   --end_len=512 \
-  --batch_size=2 \
+  --batch_size=8 \
   --dataloader_num_workers=2 \
   --input_data_dir="/mnt/ssd/" \
   --output_img_folder="/mnt/ssd/images/" \
