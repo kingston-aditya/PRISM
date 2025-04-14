@@ -168,7 +168,7 @@ class generate_syn_data(object):
         dtel = DataLoader(
             get_caps_nouns_filenames,
             shuffle=False,
-            batch_size = self.args.batch_size,
+            batch_size = 8,
             collate_fn=dynamic_collate_1,
             num_workers=self.args.dataloader_num_workers,
         )
@@ -178,10 +178,6 @@ class generate_syn_data(object):
             temp = correct_inputs(batch["images"], batch["nouns"])
             out = self.GD.predict(list(temp.values()), list(temp.keys()), 0.3, 0.25,)
             fin_out[k] = out
-            # flushing intermediate output
-            with open(os.path.join(self.args.output_metadata_folder, "temp_boxes.json"), 'w') as json_file:
-                json.dump(fin_out, json_file, indent=4)
-            json_file.close()
             k+=1
         del dtel, self.GD
         torch.cuda.empty_cache()

@@ -1,6 +1,7 @@
 from transformers import AutoProcessor, AutoModelForCausalLM 
 import pdb
 import torch
+import torch.nn as nn
 from PIL import Image
 
 def parser(caps):
@@ -64,9 +65,10 @@ class run_qwen2_vl(object):
         return output_texts
     
 class run_florence(object):
-    def __init__(self, args):
+    def __init__(self):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = AutoModelForCausalLM.from_pretrained("microsoft/Florence-2-large", trust_remote_code=True, torch_dtype=torch.float16, cache_dir = args.cache_dir).to(self.device)
+        model = AutoModelForCausalLM.from_pretrained("microsoft/Florence-2-large", trust_remote_code=True, torch_dtype=torch.float16, cache_dir = "/nfshomes/asarkar6/trinity/model_weights/")
+        self.model = model.to(self.device)
         self.processor = AutoProcessor.from_pretrained("microsoft/Florence-2-large", trust_remote_code=True)
 
     def forward(self, img_input):
@@ -85,7 +87,7 @@ class run_florence(object):
 if __name__ == "__main__":
     img = Image.open("/nfshomes/asarkar6/aditya/test_image.png")
     img1 = Image.open("/nfshomes/asarkar6/trinity/trinity-images/4500.png")
-    imgs = [img, img1]*5
+    imgs = [img, img1]*16
     mllm_obj = run_florence()
     caps = mllm_obj.forward(imgs)
     print(len(caps), caps)

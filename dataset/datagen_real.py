@@ -117,6 +117,7 @@ class generate_real_data(object):
             num_workers=self.args.dataloader_num_workers,
         )
         print("Number of batches", len(dtel), "Total size", len(dtel)*self.args.batch_size)
+        del self.pil_dataset
         
         k = 0
         img_dataset = {"file_name":{}, "images": {}}
@@ -128,7 +129,6 @@ class generate_real_data(object):
                 k += 1
         end_time = time.time()
         print(f"Total runtime of the TASK 1 is {end_time - start_time}") 
-        pdb.set_trace()
 
         # Task 2 - Get detailed captions
         self.mllm_obj = run_mllm.run_florence(self.args)
