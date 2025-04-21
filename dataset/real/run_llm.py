@@ -13,6 +13,7 @@ import pdb
 from vllm import LLM, SamplingParams
 from tqdm import tqdm
 import json
+import time
 
 def make_message_qwen(batch,typ):
     temp = []
@@ -47,6 +48,8 @@ class run_qwen(object):
         return temp 
 
 if __name__ == "__main__":
+    start_time = time.time()
+
     # load the captions
     f = open(os.path.join(args["output_metadata_folder"], "temp_caps.json"))
     cn = json.load(f)
@@ -66,6 +69,9 @@ if __name__ == "__main__":
         json.dump(cn, json_file, indent=4)
     json_file.close()
     torch.cuda.empty_cache()
+
+    end_time = time.time()
+    print(f"Total RUNTIME is {end_time - start_time}")
     
     
     
