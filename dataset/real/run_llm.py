@@ -53,7 +53,7 @@ if __name__ == "__main__":
 
     k=0
     llm_obj = run_qwen(args)
-    for item in tqdm(cn["captions"], desc="Processing"):
+    for item in tqdm(list(cn["captions"].values()), desc="Processing"):
         r1 = llm_obj.forward(item, 0)
         r2 = llm_obj.forward(r1, 1)
         cn["captions"][k] = r1

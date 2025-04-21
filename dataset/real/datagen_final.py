@@ -17,8 +17,8 @@ args = get_config()
 import sys
 sys.path.insert(1, args["repo_path"])
 from utilities.run_gd import GDINO
-from dataset.utils import correct_inputs, pretty_output
 from dataset.synthetic.sharegpt_dataloader import GD_batcher
+from dataset.utils import correct_inputs, pretty_output
 import pdb 
 
 import os
@@ -28,17 +28,19 @@ def dynamic_collate_3(batch):
     it = [item['image'] for item in batch]
     return it
 
-def run_init_real():
+def run_final_real():
     start_time = time.time()
 
     ## task 1 - load the images and filenames
     img_dataset = {"images": {}, "file_name": {}}
     k = 0
-    for i in tqdm(sorted(os.listdir(args["output_img_folder"])), desc="Loading images"):
-        img_dataset["images"][k] = Image.open(os.path.join(args["output_img_folder"], i))
+    long_list = sorted(os.listdir(args["output_img_folder"]), key=lambda x: int(x.split(".")[0]))
+    temp = [[Image.open(os.path.join(args["output_img_folder"], j)) for j in long_list[i:i + args["batch_size"]]] for i in range(0, len(long_list),  args["batch_size"])]
+    for item in tqdm(temp, desc="Loading images"):
+        img_dataset["images"][k] = item
         k+=1
 
-    with open(os.path.join(args["output_metadata_folder"], "temp_images.json"), 'r') as f:
+    with open(os.path.join(args["output_metadata_folder"], "temp_imgs.json"), 'r') as f:
         img_filnames = json.load(f)
     img_dataset["file_name"] = img_filnames
 
@@ -56,7 +58,7 @@ def run_init_real():
     )
     ents, imgs = GD_batcher(list(temp.keys()), list(temp.values()), args["batch_size"])
 
-    gdino_obj = GDINO()
+    gdino_obj = GDINO(args)
     fin_out = {}; k=0
     for idx in tqdm(range(len(ents)), desc="Processing"):
         out = gdino_obj.predict(ents[idx], imgs[idx], 0.3, 0.25,)
@@ -75,4 +77,7 @@ def run_init_real():
     f.close()
     end_time = time.time()
     print(f"Total RUNTIME is {end_time - start_time}")
+
+if __name__ == "__main__":
+    run_final_real()
 
