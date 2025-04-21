@@ -1,11 +1,3 @@
-python /data/aditya/PRISM/dataset/datagen_real.py \
-  --llm_model="Qwen/Qwen2.5-7B-Instruct" \
-  --mllm_model="Qwen/Qwen2.5-VL-7B-Instruct" \
-  --cache_dir="/mnt/ssd/" \
-  --start_len=0 \
-  --end_len=512 \
-  --batch_size=8 \
-  --dataloader_num_workers=2 \
-  --input_data_dir="/mnt/ssd/" \
-  --output_img_folder="/mnt/ssd/images/" \
-  --output_metadata_folder="/mnt/ssd/"
+python /nfshomes/asarkar6/aditya/PRISM/dataset/real/datagen_init.py
+python /nfshomes/asarkar6/aditya/PRISM/dataset/real/run_llm.py
+accelerate launch /nfshomes/asarkar6/aditya/PRISM/dataset/real/datagen_launch.py

@@ -1,23 +1,30 @@
-import torch
 from PIL import Image
-import numpy as np
 from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
+from accelerate import PartialState
+from accelerate.utils import gather_object
 import pdb
 
-def correct_inputs(imgs, txts):
-    temp = {}
-    for i in range(len(txts)):
-        for j in txts[i].split(","):
-            temp[j] = imgs[i]
-    return temp
+from config import get_config
+args = get_config()
+
+# def correct_inputs(imgs, txts):
+#     temp = {}; temp1 = {}
+#     k = 0
+#     for i in range(len(txts)):
+#         for j in txts[i].split(","):
+#             temp[k] = imgs[i]
+#             temp1[k] = j
+#             k+=1
+#     return temp, temp1
 
 class GDINO(object):
     def __init__(self, args):
         model_id = "IDEA-Research/grounding-dino-base"
-        self.device = "cuda"
-        # cache_dir = args.cache_dir
-        self.processor = AutoProcessor.from_pretrained(model_id, cache_dir = args.cache_dir)
-        self.model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id, cache_dir = args.cache_dir).to(self.device)
+        self.processor = AutoProcessor.from_pretrained(model_id, cache_dir = args["cache_dir"])
+        self.model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id, cache_dir = args["cache_dir"])
+        # load it on multiple GPUs
+        self.distributed_state = PartialState()
+        self.model.to(self.distributed_state.device)
 
     def predict(
         self,
@@ -29,17 +36,22 @@ class GDINO(object):
         for i, prompt in enumerate(text_prompt):
             if prompt[-1] != ".":
                 text_prompt[i] += "."
-        inputs = self.processor(images=pil_images, text=text_prompt, padding = True, return_tensors="pt").to(self.device)
-        with torch.no_grad():
-            outputs = self.model(**inputs)
 
-        results = self.processor.post_process_grounded_object_detection(
-            outputs,
-            inputs.input_ids,
-            threshold=box_threshold,
-            text_threshold=text_threshold,
-            target_sizes=[k.size[::-1] for k in pil_images],
-        )
+        side = list(zip(pil_images, text_prompt))
+        with self.distributed_state.split_between_processes(side) as side_t:
+            pi = [item[0] for item in side_t]
+            tp = [item[1] for item in side_t]
+
+            batched_inputs = self.processor(images=pi, text=tp, padding = True, return_tensors="pt").to(self.distributed_state.device)
+            outputs = self.model(**batched_inputs)
+            results = self.processor.post_process_grounded_object_detection(
+                outputs,
+                batched_inputs.input_ids,
+                threshold=box_threshold,
+                text_threshold=text_threshold,
+                target_sizes=[k.size[::-1] for k in pi],
+            )
+        results = gather_object(results) 
         return results
 
 # if __name__ == "__main__":
@@ -47,9 +59,11 @@ class GDINO(object):
 #     img = Image.open("/nfshomes/asarkar6/aditya/generated_image.png")
 #     img1 = Image.open("/nfshomes/asarkar6/trinity/trinity-images/4500.png")
 
-#     imgs = [img, img1]
-#     labs = ["strawberry", "human"]
-#     temp = correct_inputs(imgs, labs)
-
-#     out = gdino_obj.predict(list(temp.values()), list(temp.keys()), 0.3, 0.25,)
+#     fin_out = {}; k=0
+#     imgs = [[img, img1]*2]*4
+#     labs = [["lion", "road"]*2]*4
+#     for idx in range(len(imgs)):
+#         temp = correct_inputs(imgs[idx], labs[idx])
+#         out = gdino_obj.predict(list(temp.values()), list(temp.keys()), 0.3, 0.25,)
 #     pdb.set_trace()
+    

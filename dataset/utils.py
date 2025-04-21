@@ -1,7 +1,6 @@
 import math
 import numpy as np
 import json
-from PIL import Image
 
 def correct_inputs(imgs, txts):
     temp = {}
@@ -16,11 +15,11 @@ def pretty_output(bbox_lst, filname_lst, noun_lst, cap_lst, f):
         object_temp = bbox_lst[k:k+len(noun_lst[i].split(","))]
         atema = []
         for item in object_temp:
-            if len(item['scores'].cpu().tolist()) !=0:
-                xmin = math.ceil(np.asarray(item["boxes"].to("cpu"))[0][0])
-                ymin = math.ceil(np.asarray(item["boxes"].to("cpu"))[0][1])
-                xmax = math.ceil(np.asarray(item["boxes"].to("cpu"))[0][2])
-                ymax = math.ceil(np.asarray(item["boxes"].to("cpu"))[0][3])
+            if len(item['scores'].detach().cpu().tolist()) !=0:
+                xmin = math.ceil(np.asarray(item["boxes"].detach().to("cpu"))[0][0])
+                ymin = math.ceil(np.asarray(item["boxes"].detach().to("cpu"))[0][1])
+                xmax = math.ceil(np.asarray(item["boxes"].detach().to("cpu"))[0][2])
+                ymax = math.ceil(np.asarray(item["boxes"].detach().to("cpu"))[0][3])
                 labels = item["labels"][0]
                 filname = str(filname_lst[i])
                 atema.append({"xmin": xmin, "ymin": ymin, "xmax": xmax, "ymax": ymax, "labels": labels, "img_pth": filname})
@@ -30,28 +29,3 @@ def pretty_output(bbox_lst, filname_lst, noun_lst, cap_lst, f):
         k += len(noun_lst[i].split(","))
         f.write(json.dumps(temp) + '\n')
 
-def dynamic_collate(batch):
-    it = [item for item in batch]
-    return it
-
-def dynamic_collate_1(batch):
-    it_nouns = [item["nouns"] for item in batch]
-    it_imgs = [item["images"] for item in batch]
-
-    return {
-        "nouns": it_nouns,
-        "images": it_imgs
-    }
-
-def dynamic_collate_2(batch):
-    it_nouns = [item["nouns"] for item in batch]
-    it_imgs = [Image.open(item["images"]) for item in batch]
-
-    return {
-        "nouns": it_nouns,
-        "images": it_imgs
-    }
-
-def dynamic_collate_3(batch):
-    it = [item['image'] for item in batch]
-    return it
