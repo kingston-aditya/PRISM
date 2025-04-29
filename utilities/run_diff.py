@@ -2,8 +2,8 @@ import os
 import torch
 from torchvision import transforms
 
-from huggingface_hub import login
-login(token = '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')
+# from huggingface_hub import login
+# login(token = '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')
 
 from diffusers import FluxPipeline, DiffusionPipeline 
 from accelerate import PartialState
@@ -12,7 +12,7 @@ from accelerate.utils import gather_object
 # flux model pipeline
 class run_flux(object):
     def __init__(self, args):
-        self.pipe = FluxPipeline.from_pretrained("black-forest-labs/FLUX.1-dev", token="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",  cache_dir = args["cache_dir"], torch_dtype=torch.bfloat16)
+        self.pipe = FluxPipeline.from_pretrained("black-forest-labs/FLUX.1-dev", token="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",  cache_dir = args["cache_dir"], torch_dtype=torch.bfloat16)
         self.pipe.set_progress_bar_config(disable=True)
         # load it on multiple GPUs
         self.distributed_state = PartialState()

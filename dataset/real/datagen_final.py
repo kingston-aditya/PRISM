@@ -56,7 +56,7 @@ def run_final_real():
         [item for sublist in list(img_dataset["images"].values()) for item in sublist],
         [item for sublist in nouns for item in sublist]
     )
-    ents, imgs = GD_batcher(list(temp.keys()), list(temp.values()), args["batch_size"])
+    ents, imgs = GD_batcher(list(temp.keys()), list(temp.values()), 16)
 
     gdino_obj = GDINO(args)
     fin_out = {}; k=0
