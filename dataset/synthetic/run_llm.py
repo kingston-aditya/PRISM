@@ -3,8 +3,21 @@
 
 import os
 import time
+
+# get all the args
+import argparse
 from config import get_config
 args = get_config()
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Use argparse for three params.")
+    parser.add_argument('--start_len', type=int, help='Start len')
+    parser.add_argument('--end_len', type=int, help='End len')
+    parser.add_argument('--job_id', type=int, help='job id')
+
+    fixn_args = parser.parse_args()
+    return fixn_args
+
 from sharegpt_dataloader import ShareGPT
 
 import torch 
@@ -48,8 +61,10 @@ class run_qwen(object):
 
 if __name__ == "__main__":
     start_time = time.time()
+    fixn_args = parse_args()
+
     cn = {"captions": {}, "nouns": {}}
-    caps_dataset = ShareGPT(args["data_path"], args["batch_size"], args["start_len"], args["end_len"])
+    caps_dataset = ShareGPT(args["data_path"], args["batch_size"], fixn_args.start_len, fixn_args.end_len)
 
     k=0
     llm_obj = run_qwen(args)
@@ -66,7 +81,7 @@ if __name__ == "__main__":
     del llm_obj
     # save dataset
     output_metadata_folder = args["output_metadata_folder"]
-    temp_caps_path = os.path.join(output_metadata_folder, "temp_caps.json")
+    temp_caps_path = os.path.join(output_metadata_folder, "temp_caps"+str(fixn_args.job_id)+".json")
     # Create the output metadata folder if it doesn't exist
     if not os.path.exists(output_metadata_folder):
         os.makedirs(output_metadata_folder)

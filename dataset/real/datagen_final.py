@@ -1,21 +1,3 @@
-def get_config():
-    return {
-        "repo_path": "/data/home/saividyaranya/PRISM/",
-        "input_data_dir": "/fsx/mrs_shlok_sai/cc12m_v2/",
-        "llm_model": "Qwen/Qwen2.5-72B-Instruct",
-        "mllm_model": "Qwen/Qwen2.5-VL-72B-Instruct",
-        "cache_dir": "/data/home/saividyaranya/PRISM/cached_folder_real",
-        "batch_size": 512,
-        "dataloader_num_workers": 1,
-        "is_sdxl": "False",
-        "start_len": 3_000_000,
-        "end_len": 4_500_000,
-        "output_metadata_folder": "/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder",
-        "output_img_folder": "/data/home/saividyaranya/PRISM/cached_folder_real/images/",
-        "job_id": 1
-    }
-args = get_config()
-
 import torch
 import os
 from tqdm import tqdm
@@ -25,6 +7,20 @@ from PIL import Image
 
 import warnings
 warnings.filterwarnings("ignore")
+
+# get all the args
+import argparse
+from config import get_config
+args = get_config()
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Use argparse for three params.")
+    parser.add_argument('--start_len', type=int, help='STart len')
+    parser.add_argument('--end_len', type=int, help='End len')
+    parser.add_argument('--job_id', type=int, help='job id')
+
+    fixn_args = parser.parse_args()
+    return fixn_args
 
 import sys
 sys.path.insert(1, args["repo_path"])
@@ -52,12 +48,12 @@ def run_final_real():
         img_dataset["images"][k] = item
         k+=1
 
-    with open(os.path.join(args["output_metadata_folder"], "temp_imgs"+ str(args["job_id"]) +".json"), 'r') as f:
+    with open(os.path.join(args["output_metadata_folder"], "temp_imgs"+ str(args.job_id) +".json"), 'r') as f:
         img_filnames = json.load(f)
     img_dataset["file_name"] = img_filnames
 
     ## load the captions
-    with open(os.path.join(args["output_metadata_folder"], "temp_caps"+ str(args["job_id"]) +".json"), 'r') as f:
+    with open(os.path.join(args["output_metadata_folder"], "temp_caps"+ str(args.job_id) +".json"), 'r') as f:
         prts = json.load(f)
     caps = list(prts["captions"].values())
     nouns = list(prts["nouns"].values())
@@ -80,7 +76,7 @@ def run_final_real():
     torch.distributed.destroy_process_group()
     torch.cuda.empty_cache()
 
-    f = open(os.path.join(args["output_metadata_folder"], "metadata"+ str(args["job_id"]) +".jsonl"), "w")
+    f = open(os.path.join(args["output_metadata_folder"], "metadata"+ str(args.job_id) +".jsonl"), "w")
     bbox_lst = [j for i in fin_out.values() for j in i]
     filname_lst = [j for i in img_dataset["file_name"].values() for j in i]
     noun_lst = [j for i in nouns for j in i]

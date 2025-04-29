@@ -9,8 +9,19 @@ import json
 import pdb 
 import time
 
+# get all the args
+import argparse
 from config import get_config
 args = get_config()
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Use argparse for three params.")
+    parser.add_argument('--start_len', type=int, help='STart len')
+    parser.add_argument('--end_len', type=int, help='End len')
+    parser.add_argument('--job_id', type=int, help='job id')
+
+    fixn_args = parser.parse_args()
+    return fixn_args
 
 from sharegpt_dataloader import GD_batcher
 
@@ -20,11 +31,11 @@ from utilities.run_diff import run_sdxl, run_flux
 from utilities.run_gd import GDINO
 from dataset.utils import correct_inputs, pretty_output
 
-def run_final_syn():
+def run_final_syn(fixn_args):
     start_time = time.time()
 
     ## task 1 - generate the images
-    with open(os.path.join(args["output_metadata_folder"], "temp_caps.json"), 'r') as f:
+    with open(os.path.join(args["output_metadata_folder"], "temp_caps" + str(fixn_args.job_id) + ".json"), 'r') as f:
         prts = json.load(f)
     caps = list(prts["captions"].values())
     nouns = list(prts["nouns"].values())
@@ -42,8 +53,8 @@ def run_final_syn():
 
         a = {}; b={}
         for i in imgs:
-            i.save(os.path.join(args["output_img_folder"], str(args["start_len"]+k1)+".png"))
-            a[k] = os.path.join(os.path.join(args["output_img_folder"], str(args["start_len"]+k1)+".png"))
+            i.save(os.path.join(args["output_img_folder"], str(fixn_args.start_len+k1)+".png"))
+            a[k] = os.path.join(os.path.join(args["output_img_folder"], str(fixn_args.start_len+k1)+".png"))
             b[k] = i
             k+=1
         img_dataset["file_name"][k1] = list(a.values())
@@ -53,7 +64,7 @@ def run_final_syn():
     torch.cuda.empty_cache()
     
     # save the tensor stuff
-    with open(os.path.join(args["output_metadata_folder"], "temp_images.json"), 'w') as json_file:
+    with open(os.path.join(args["output_metadata_folder"], "temp_images" + str(fixn_args.job_id) + ".json"), 'w') as json_file:
         json.dump(img_dataset["file_name"], json_file, indent=4)
 
     print("DONE WIRH SDXL")
@@ -76,7 +87,7 @@ def run_final_syn():
     torch.distributed.destroy_process_group()
     torch.cuda.empty_cache()
 
-    f = open(os.path.join(args["output_metadata_folder"], "metadata_"+str(args["job_id"])+".jsonl"), "w")
+    f = open(os.path.join(args["output_metadata_folder"], "metadata_"+str(fixn_args.job_id)+".jsonl"), "w")
     bbox_lst = [j for i in fin_out.values() for j in i]
     filname_lst = [j for i in img_dataset["file_name"].values() for j in i]
     noun_lst = [j for i in nouns for j in i]
@@ -87,4 +98,5 @@ def run_final_syn():
     print(f"Total RUNTIME is from run final syn {end_time - start_time}")
 
 if __name__ == "__main__":
-    run_final_syn()
+    fixn_args = parse_args()
+    run_final_syn(fixn_args)
