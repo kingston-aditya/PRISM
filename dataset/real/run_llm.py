@@ -27,7 +27,7 @@ def make_message_qwen(batch,typ):
     temp = []
     for prt in batch:
         if typ == 0:
-            cont1_q = "Question - Improve the language of the text. It should contain all the objects from the input prompt." + "\n\n Prompt -" + prt + "\n\n Output -"
+            cont1_q = "Question - Rewrite the prompt as if it was an image's caption. It should contain all the objects from the input prompt. Output only the caption." + "\n\n Prompt -" + prt + "\n\n Output -"
             mssg = [{"role":"system", "content":"You are Qwen, created by Alibaba Cloud. You are a helpful assistant."},{"role":"user","content":cont1_q}]
         else:
             cont2_q = "An image is generated using the input prompt. Output objects that can be present in the generated image and there is no overlap between the bounding boxes on those objects. Objects and their adjectives should be from the input prompt and must be in less than 4 words. Abstract nouns should NOT be given as output."
