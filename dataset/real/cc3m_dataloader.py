@@ -1,7 +1,7 @@
 from datasets import load_dataset, Image
 from glob import glob
 import torch
-import PIL
+import PIL.Image
 import os
 import io
 import math
@@ -12,6 +12,7 @@ def t2i_process_fn(batch):
     captions = batch["caption"]
     for i in range(len(images)):
         try:
+            # import pdb; pdb.set_trace()
             images[i] = PIL.Image.open(io.BytesIO(images[i]["bytes"]) if images[i]["bytes"] is not None else images[i]["path"]).convert('RGB')
         except:
             print("corrupt!!!!")

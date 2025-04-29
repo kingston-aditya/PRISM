@@ -1,15 +1,15 @@
 def get_config():
     return {
-        "repo_path": "/data/aditya/PRISM/",
-        "input_data_dir": "/mnt/ssd/",
+        "repo_path": "/data/home/saividyaranya/PRISM/",
+        "input_data_dir": "/fsx/mrs_shlok_sai/cc12m_v2/",
         "llm_model": "Qwen/Qwen2.5-72B-Instruct",
         "mllm_model": "Qwen/Qwen2.5-VL-72B-Instruct",
-        "cache_dir": "/nfshomes/asarkar6/trinity/model_weights/",
-        "batch_size": 128,
+        "cache_dir": "/data/home/saividyaranya/PRISM/cached_folder_real",
+        "batch_size": 512,
         "dataloader_num_workers": 1,
-        "is_sdxl": "True",
-        "start_len": 0,
-        "end_len": 512,
-        "output_metadata_folder": "/mnt/ssd/finale_data/",
-        "output_img_folder": "/mnt/ssd/finale_data/images/" 
+        "is_sdxl": "False",
+        "start_len": 3_000_000,
+        "end_len": 4_500_000,
+        "output_metadata_folder": "/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder",
+        "output_img_folder": "/data/home/saividyaranya/PRISM/cached_folder_real/images/" 
     }

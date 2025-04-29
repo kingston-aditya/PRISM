@@ -9,8 +9,8 @@ import json
 import pdb 
 import time
 
-from config import get_config
-args = get_config()
+from config import get_config_3
+args = get_config_3()
 
 from sharegpt_dataloader import GD_batcher
 

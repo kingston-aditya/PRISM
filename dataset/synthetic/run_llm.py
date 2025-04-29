@@ -53,22 +53,31 @@ if __name__ == "__main__":
 
     k=0
     llm_obj = run_qwen(args)
-    for item in tqdm(caps_dataset, desc="Processing"):
+    for i, item in enumerate(tqdm(caps_dataset, desc="Processing")):
+        if i == len(caps_dataset) - 1:
+            break
+        print("something in for loop")
         r1 = llm_obj.forward(item, 0)
         r2 = llm_obj.forward(r1, 1)
         cn["captions"][k] = r1
         cn["nouns"][k] = r2
         k+=1
-
+    print("end of for loop in run llm")
     del llm_obj
     # save dataset
-    with open(os.path.join(args["output_metadata_folder"], "temp_caps.json"), 'w') as json_file:
+    output_metadata_folder = args["output_metadata_folder"]
+    temp_caps_path = os.path.join(output_metadata_folder, "temp_caps.json")
+    # Create the output metadata folder if it doesn't exist
+    if not os.path.exists(output_metadata_folder):
+        os.makedirs(output_metadata_folder)
+    with open(temp_caps_path, 'w') as json_file:
+    # with open(os.path.join(args["output_metadata_folder"], "temp_caps.json"), 'w') as json_file:
         json.dump(cn, json_file, indent=4)
-    json_file.close()
+    # json_file.close()
     torch.cuda.empty_cache()
 
     end_time = time.time()
-    print(f"Total RUNTIME is {end_time - start_time}")
+    print(f"Total RUNTIME from run llm is {end_time - start_time}")
     
     
     

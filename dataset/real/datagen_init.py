@@ -44,11 +44,13 @@ def run_init_real():
     k = 0; k1 = 0
     cn = {"captions":{}, "nouns":{}}
     img_dataset = {"file_name":{}, "images": {}}
+    import pdb; pdb.set_trace()
     for batch in tqdm(dtel, desc="Saving data"):
         temp = {"filname":{}, "imgs":{}}
         for img in batch["image"]:
-            img.save(os.path.join(args["output_img_folder"], str(k1)+".png"))
-            temp["filname"][k1] = os.path.join(args["output_img_folder"], str(k1)+".png")
+            
+            img.save( os.path.join(args["output_img_folder"], str(args["start_len"]+k1)+".png"))
+            temp["filname"][k1] = os.path.join(args["output_img_folder"], str(args["start_len"]+k1)+".png")
             temp["imgs"][k1] = img
             k1 += 1
         img_dataset["file_name"][k] = list(temp["filname"].values())
