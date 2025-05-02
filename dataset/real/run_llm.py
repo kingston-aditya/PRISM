@@ -85,8 +85,6 @@ if __name__ == "__main__":
         json_file.close()
     del llm_obj
 
-    
-
     end_time = time.time()
     print(f"Total RUNTIME is {end_time - start_time}")
     
