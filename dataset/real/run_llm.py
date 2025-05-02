@@ -72,18 +72,31 @@ if __name__ == "__main__":
     k=0
     llm_obj = run_qwen(args)
     for item in tqdm(list(cn["captions"].values()), desc="Getting Nouns"):
-        r1 = llm_obj.forward(item, 0)
-        r2 = llm_obj.forward(r1, 1)
-        cn["captions"][k] = r1
-        cn["nouns"][k] = r2
-        k+=1
-        torch.cuda.empty_cache()
-
-        # store temp_caps at every step.
-        with open(os.path.join(args["output_metadata_folder"], "temp_caps"+ str(fixn_args.job_id) +".json"), 'w') as json_file:
-            json.dump(cn, json_file, indent=4)
-        json_file.close()
+        try:
+            r1 = llm_obj.forward(item, 0)
+            r2 = llm_obj.forward(r1, 1)
+            cn["captions"][k] = r1
+            cn["nouns"][k] = r2
+            k+=1
+            torch.cuda.empty_cache()
+            
+            # save after 50 iterations
+            if k%50==0:
+                with open(os.path.join(args["output_metadata_folder"], "temp_caps"+ str(fixn_args.job_id) +".json"), 'w') as json_file:
+                    json.dump(cn, json_file, indent=4)
+                json_file.close()
+        except:
+            print("Oh crap!")
+            # store temp_caps at every step.
+            with open(os.path.join(args["output_metadata_folder"], "temp_caps"+ str(fixn_args.job_id) +".json"), 'w') as json_file:
+                json.dump(cn, json_file, indent=4)
+            json_file.close()
     del llm_obj
+
+    # store temp_caps at every step.
+    with open(os.path.join(args["output_metadata_folder"], "temp_caps"+ str(fixn_args.job_id) +".json"), 'w') as json_file:
+        json.dump(cn, json_file, indent=4)
+    json_file.close()
 
     end_time = time.time()
     print(f"Total RUNTIME is {end_time - start_time}")
