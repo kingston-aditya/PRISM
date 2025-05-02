@@ -36,7 +36,7 @@ def dynamic_collate_3(batch):
     it = [item['image'] for item in batch]
     return it
 
-def run_final_real():
+def run_final_real(fixn_args):
     start_time = time.time()
 
     ## task 1 - load the images and filenames
@@ -48,12 +48,12 @@ def run_final_real():
         img_dataset["images"][k] = item
         k+=1
 
-    with open(os.path.join(args["output_metadata_folder"], "temp_imgs"+ str(args.job_id) +".json"), 'r') as f:
+    with open(os.path.join(args["output_metadata_folder"], "temp_imgs"+ str(fixn_args.job_id) +".json"), 'r') as f:
         img_filnames = json.load(f)
     img_dataset["file_name"] = img_filnames
 
     ## load the captions
-    with open(os.path.join(args["output_metadata_folder"], "temp_caps"+ str(args.job_id) +".json"), 'r') as f:
+    with open(os.path.join(args["output_metadata_folder"], "temp_caps"+ str(fixn_args.job_id) +".json"), 'r') as f:
         prts = json.load(f)
     caps = list(prts["captions"].values())
     nouns = list(prts["nouns"].values())
@@ -76,7 +76,7 @@ def run_final_real():
     torch.distributed.destroy_process_group()
     torch.cuda.empty_cache()
 
-    f = open(os.path.join(args["output_metadata_folder"], "metadata"+ str(args.job_id) +".jsonl"), "w")
+    f = open(os.path.join(args["output_metadata_folder"], "metadata"+ str(fixn_args.job_id) +".jsonl"), "w")
     bbox_lst = [j for i in fin_out.values() for j in i]
     filname_lst = [j for i in img_dataset["file_name"].values() for j in i]
     noun_lst = [j for i in nouns for j in i]
