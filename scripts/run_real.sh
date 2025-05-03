@@ -12,7 +12,7 @@ python /nfshomes/asarkar6/aditya/PRISM/dataset/real/run_llm.py \
  --end_len $end_len \
  --job_id $job_id
 
-accelerate launch /nfshomes/asarkar6/aditya/PRISM/dataset/real/datagen_launch.py \
+accelerate launch /nfshomes/asarkar6/aditya/PRISM/dataset/real/datagen_final.py \
  --start_len $start_len \
  --end_len $end_len \
  --job_id $job_id
