@@ -48,13 +48,13 @@ def run_final_syn(fixn_args):
         diff_obj = run_flux(args)
 
     img_dataset = {"file_name":{}, "images":{}}
-    for prt in tqdm(caps, desc="Processing"):
+    for prt in tqdm(caps, desc="Generating Images"):
         imgs = diff_obj.forward(prt)
 
         a = {}; b={}
         for i in imgs:
-            i.save(os.path.join(args["output_img_folder"], str(fixn_args.start_len+k1)+".png"))
-            a[k] = os.path.join(os.path.join(args["output_img_folder"], str(fixn_args.start_len+k1)+".png"))
+            i.save(os.path.join(args["output_img_folder"], str(fixn_args.start_len+k)+".png"))
+            a[k] = os.path.join(os.path.join(args["output_img_folder"], str(fixn_args.start_len+k)+".png"))
             b[k] = i
             k+=1
         img_dataset["file_name"][k1] = list(a.values())
