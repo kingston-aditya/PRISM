@@ -63,15 +63,15 @@ if __name__ == "__main__":
     f = open(os.path.join(args["output_metadata_folder"], "temp_caps" + str(fixn_args.job_id) + ".json"))
     cn = json.load(f)
 
-    # check the last batch
-    if len(list(cn["captions"].values())[-1]) > args["batch_size"]:
-        lst_key = list(cn["captions"].keys())[-1]
-        cn["captions"][lst_key] = cn["captions"][lst_key][:args["batch_size"]]
-        cn["captions"][str(int(lst_key)+1)] = cn["captions"][lst_key][args["batch_size"]:]
+    # # check the last batch
+    # if len(list(cn["captions"].values())[-1]) > args["batch_size"]:
+    #     lst_key = list(cn["captions"].keys())[-1]
+    #     cn["captions"][lst_key] = cn["captions"][lst_key][:args["batch_size"]]
+    #     cn["captions"][str(int(lst_key)+1)] = cn["captions"][lst_key][args["batch_size"]:]
 
-    k=0
+    k=int(list(cn["captions"].keys())[-1])
     llm_obj = run_qwen(args)
-    for item in tqdm(list(cn["captions"].values())[850:], desc="Getting Nouns"):
+    for item in tqdm(list(cn["captions"].values())[k:], desc="Getting Nouns"):
         try:
             r1 = llm_obj.forward(item, 0)
             r2 = llm_obj.forward(r1, 1)

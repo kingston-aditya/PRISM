@@ -34,8 +34,11 @@ class GDINO(object):
         text_threshold,
     ):
         for i, prompt in enumerate(text_prompt):
-            if prompt[-1] != ".":
-                text_prompt[i] += "."
+            if len(prompt) == 0:
+                text_prompt[i] = "."
+            else:
+                if prompt[-1] != ".":
+                    text_prompt[i] += "."
 
         side = list(zip(pil_images, text_prompt))
         with self.distributed_state.split_between_processes(side) as side_t:
