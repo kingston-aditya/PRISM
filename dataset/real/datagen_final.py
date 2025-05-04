@@ -58,7 +58,7 @@ def run_final_real(fixn_args):
 
     # load the captions, nouns, image filenames
     k1=0
-    for item in list(img_filnames.values()):
+    for item in list(img_filnames.values())[fixn_args.start_len:fixn_args.end_len]:
         img_lst = {}; k=0
         for img_pth in item:
             try:
