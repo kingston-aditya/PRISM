@@ -87,5 +87,7 @@ def run_final_real(fixn_args):
     print(f"Total RUNTIME is {end_time - start_time}")
 
 if __name__ == "__main__":
-    run_final_real()
+    fixn_args = parse_args()
+    run_final_real(fixn_args)
+
 
