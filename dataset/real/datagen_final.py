@@ -42,7 +42,7 @@ def run_final_real(fixn_args):
     ## task 1 - load the images and filenames
     img_dataset = {"images": {}, "file_name": {}}
     k = 0
-    long_list = sorted(os.listdir(args["output_img_folder"]), key=lambda x: int(x.split(".")[0]))
+    long_list = sorted(os.listdir(args["output_img_folder"]), key=lambda x: int(x.split(".")[0]))[fixn_args.start_len:fixn_args.end_len]
     temp = [[Image.open(os.path.join(args["output_img_folder"], j)) for j in long_list[i:i + args["batch_size"]]] for i in range(0, len(long_list),  args["batch_size"])]
     for item in tqdm(temp, desc="Loading images"):
         img_dataset["images"][k] = item
