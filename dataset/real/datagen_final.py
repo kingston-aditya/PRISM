@@ -4,6 +4,7 @@ from tqdm import tqdm
 import time
 import json
 from PIL import Image
+import numpy as np
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -41,13 +42,10 @@ def run_final_real(fixn_args):
 
     ## task 1 - load the images and filenames
     img_dataset = {"images": {}, "file_name": {}}
-    k = 0
-    long_list = sorted(os.listdir(args["output_img_folder"]), key=lambda x: int(x.split(".")[0]))[fixn_args.start_len:fixn_args.end_len]
-    temp = [[Image.open(os.path.join(args["output_img_folder"], j)) for j in long_list[i:i + args["batch_size"]]] for i in range(0, len(long_list),  args["batch_size"])]
-    for item in tqdm(temp, desc="Loading images"):
-        img_dataset["images"][k] = item
-        k+=1
-
+    
+    ## task 1 - 
+    ## a) get the filenames and captions
+    ## b) align them if image exists else ignore it
     with open(os.path.join(args["output_metadata_folder"], "temp_imgs"+ str(fixn_args.job_id) +".json"), 'r') as f:
         img_filnames = json.load(f)
     img_dataset["file_name"] = img_filnames
@@ -57,6 +55,19 @@ def run_final_real(fixn_args):
         prts = json.load(f)
     caps = list(prts["captions"].values())
     nouns = list(prts["nouns"].values())
+
+    # load the captions, nouns, image filenames
+    k1=0
+    for item in list(img_filnames.values()):
+        img_lst = {}; k=0
+        for img_pth in item:
+            try:
+                img_lst[k] = Image.open(os.path.join(args["output_img_folder"], img_pth))
+            except:
+                img_lst[k] = Image.fromarray(np.zeros((224, 224, 3), dtype=np.uint8))
+            k+=1
+        img_dataset["images"][k1] = list(img_lst.values())
+        k1+=1
 
     ## task 3 - form the bounding boxes
     # create batches
@@ -68,7 +79,7 @@ def run_final_real(fixn_args):
 
     gdino_obj = GDINO(args)
     fin_out = {}; k=0
-    for idx in tqdm(range(len(ents)), desc="Processing"):
+    for idx in tqdm(range(len(ents)), desc="Processing BBox"):
         out = gdino_obj.predict(ents[idx], imgs[idx], 0.3, 0.25,)
         fin_out[k] = out
         k+=1
