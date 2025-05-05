@@ -4,9 +4,6 @@ from accelerate import PartialState
 from accelerate.utils import gather_object
 import pdb
 
-from config import get_config
-args = get_config()
-
 # def correct_inputs(imgs, txts):
 #     temp = {}; temp1 = {}
 #     k = 0
@@ -54,19 +51,22 @@ class GDINO(object):
                 text_threshold=text_threshold,
                 target_sizes=[k.size[::-1] for k in pi],
             )
+            for item in results:
+                item["scores"] = item["scores"].detach().to("cpu").tolist()
+                item["boxes"] = item["boxes"].detach().to("cpu")
+
         results = gather_object(results) 
         return results
 
-# if __name__ == "__main__":
-#     gdino_obj = GDINO()
-#     img = Image.open("/nfshomes/asarkar6/aditya/generated_image.png")
-#     img1 = Image.open("/nfshomes/asarkar6/trinity/trinity-images/4500.png")
+if __name__ == "__main__":
+    args = {"cache_dir": "/nfshomes/asarkar6/trinity/model_weights/"}
+    gdino_obj = GDINO(args)
+    img = Image.open("/nfshomes/asarkar6/aditya/test_image.png")
+    img1 = Image.open("/nfshomes/asarkar6/trinity/trinity-images/4500.png")
 
-#     fin_out = {}; k=0
-#     imgs = [[img, img1]*2]*4
-#     labs = [["lion", "road"]*2]*4
-#     for idx in range(len(imgs)):
-#         temp = correct_inputs(imgs[idx], labs[idx])
-#         out = gdino_obj.predict(list(temp.values()), list(temp.keys()), 0.3, 0.25,)
-#     pdb.set_trace()
+    fin_out = {}; k=0
+    imgs = [img, img1]*2
+    labs = ["lion", "road"]*2
+    out = gdino_obj.predict(imgs, labs, 0.3, 0.25,)
+    pdb.set_trace()
     

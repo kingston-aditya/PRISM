@@ -30,11 +30,11 @@ def pretty_output(bbox_lst, filname_lst, noun_lst, cap_lst, f):
         object_temp = bbox_lst[k:k+len(noun_lst[i].split(","))]
         atema = []
         for item in object_temp:
-            if len(item['scores'].detach().cpu().tolist()) !=0:
-                xmin = math.ceil(np.asarray(item["boxes"].detach().to("cpu"))[0][0])
-                ymin = math.ceil(np.asarray(item["boxes"].detach().to("cpu"))[0][1])
-                xmax = math.ceil(np.asarray(item["boxes"].detach().to("cpu"))[0][2])
-                ymax = math.ceil(np.asarray(item["boxes"].detach().to("cpu"))[0][3])
+            if len(item['scores']) !=0:
+                xmin = math.ceil(np.asarray(item["boxes"])[0][0])
+                ymin = math.ceil(np.asarray(item["boxes"])[0][1])
+                xmax = math.ceil(np.asarray(item["boxes"])[0][2])
+                ymax = math.ceil(np.asarray(item["boxes"])[0][3])
                 labels = item["labels"][0]
                 filname = str(filname_lst[i])
                 atema.append({"xmin": xmin, "ymin": ymin, "xmax": xmax, "ymax": ymax, "labels": labels, "img_pth": filname})

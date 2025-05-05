@@ -59,7 +59,7 @@ def run_final_real(fixn_args):
     k1=0
     f = open(os.path.join(args["output_metadata_folder"], "metadata"+ str(fixn_args.job_id) +".jsonl"), "w")
     gdino_obj = GDINO(args)
-    # take one final step
+
     # import pdb; pdb.set_trace()
     print("len of img dtaset", len(img_dataset["file_name"]))
     offset =  (fixn_args.job_id - 1) * 750_000
@@ -81,16 +81,16 @@ def run_final_real(fixn_args):
             img_dataset_images,
             nouns[k1]
         )
-        ents, imgs = GD_batcher(list(temp.keys()), list(temp.values()), 16)
+        ents, imgs = GD_batcher(list(temp.values()), list(temp.keys()), 16)
 
         fin_out = {}; k=0
         for idx in tqdm(range(len(ents)), desc="Processing BBox"):
+            lt = len(ents[idx])
             try:
-                out = gdino_obj.predict(ents[idx], imgs[idx], 0.3, 0.25,)
+                out = gdino_obj.predict(imgs[idx], ents[idx], 0.3, 0.25,)
                 fin_out[k] = out
             except:
-                fin_out[k] = out
-                pass
+                fin_out[k] = [{"scores": []} for _ in ents[idx]]
             k+=1
 
         # append the items to the file
