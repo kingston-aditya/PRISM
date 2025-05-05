@@ -48,7 +48,7 @@ def run_final_real(fixn_args):
     ## b) align them if image exists else ignore it
     with open(os.path.join(args["output_metadata_folder"], "temp_imgs"+ str(fixn_args.job_id) +".json"), 'r') as f:
         img_filnames = json.load(f)
-    img_dataset["file_name"] = img_filnames
+    img_dataset["file_name"] = list(img_filnames.values())
 
     ## load the captions
     with open(os.path.join(args["output_metadata_folder"], "temp_caps"+ str(fixn_args.job_id) +".json"), 'r') as f:
@@ -61,7 +61,7 @@ def run_final_real(fixn_args):
     f = open(os.path.join(args["output_metadata_folder"], "metadata"+ str(fixn_args.job_id) +".jsonl"), "w")
     gdino_obj = GDINO(args)
     # take one final step
-    for item in list(img_filnames.values())[fixn_args.start_len:fixn_args.end_len]:
+    for item in img_dataset["file_name"][fixn_args.start_len:fixn_args.end_len]:
         img_lst = {}; k=0
         # get the images
         for img_pth in item:
@@ -88,7 +88,7 @@ def run_final_real(fixn_args):
 
         # append the items to the file
         bbox_lst = [j for i in fin_out.values() for j in i]
-        filname_lst = list(img_dataset["file_name"].values())[k1]
+        filname_lst = [k1]
         noun_lst = nouns[k1]
         caps_lst = caps[k1]
         pretty_output(bbox_lst, filname_lst, noun_lst, caps_lst, f)
