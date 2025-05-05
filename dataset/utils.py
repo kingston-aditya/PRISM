@@ -9,6 +9,21 @@ def correct_inputs(imgs, txts):
             temp[j] = imgs[i]
     return temp
 
+def GD_batcher(imgs, txts, batch_size):
+    # create batches
+    t = {}; t1 = {}
+    s = 0
+    for i in range(len(txts)//batch_size):
+        t[i] = txts[batch_size*i:batch_size*(i+1)]
+        t1[i] = imgs[batch_size*i:batch_size*(i+1)]
+        s+=1
+
+    if len(txts)%batch_size != 0:
+        t[s+1] = txts[batch_size*(i+1):len(txts)]
+        t1[s+1] = imgs[batch_size*(i+1):len(imgs)]
+
+    return list(t.values()), list(t1.values())
+
 def pretty_output(bbox_lst, filname_lst, noun_lst, cap_lst, f):
     k = 0
     for i in range(len(noun_lst)):

@@ -26,8 +26,7 @@ def parse_args():
 import sys
 sys.path.insert(1, args["repo_path"])
 from utilities.run_gd import GDINO
-from dataset.synthetic.sharegpt_dataloader import GD_batcher
-from dataset.utils import correct_inputs, pretty_output
+from dataset.utils import correct_inputs, pretty_output, GD_batcher
 import pdb 
 
 import os
@@ -86,8 +85,12 @@ def run_final_real(fixn_args):
 
         fin_out = {}; k=0
         for idx in tqdm(range(len(ents)), desc="Processing BBox"):
-            out = gdino_obj.predict(ents[idx], imgs[idx], 0.3, 0.25,)
-            fin_out[k] = out
+            try:
+                out = gdino_obj.predict(ents[idx], imgs[idx], 0.3, 0.25,)
+                fin_out[k] = out
+            except:
+                fin_out[k] = out
+                pass
             k+=1
 
         # append the items to the file
