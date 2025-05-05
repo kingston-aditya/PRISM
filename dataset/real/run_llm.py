@@ -61,15 +61,19 @@ if __name__ == "__main__":
     fixn_args = parse_args()
     # load the captions
     f = open(os.path.join(args["output_metadata_folder"], "temp_caps" + str(fixn_args.job_id) + ".json"))
-    cn = json.load(f)
 
+    cn = json.load(f)
+    # import pdb; pdb.set_trace()
     # # check the last batch
     # if len(list(cn["captions"].values())[-1]) > args["batch_size"]:
     #     lst_key = list(cn["captions"].keys())[-1]
     #     cn["captions"][lst_key] = cn["captions"][lst_key][:args["batch_size"]]
     #     cn["captions"][str(int(lst_key)+1)] = cn["captions"][lst_key][args["batch_size"]:]
-
-    k=int(list(cn["captions"].keys())[-1])
+    if len(list(cn["nouns"].keys())) > 1:
+        k=int(list(cn["nouns"].keys())[-2])
+    else:
+        k = 0
+    print("K value before start and remaining stuff", k, len(list(cn["captions"].values())[k:]))
     llm_obj = run_qwen(args)
     for item in tqdm(list(cn["captions"].values())[k:], desc="Getting Nouns"):
         try:

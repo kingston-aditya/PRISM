@@ -88,7 +88,7 @@ def run_final_real(fixn_args):
 
         # append the items to the file
         bbox_lst = [j for i in fin_out.values() for j in i]
-        filname_lst = [k1]
+        filname_lst = img_dataset["file_name"][k1]
         noun_lst = nouns[k1]
         caps_lst = caps[k1]
         pretty_output(bbox_lst, filname_lst, noun_lst, caps_lst, f)
