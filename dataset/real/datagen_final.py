@@ -58,47 +58,53 @@ def run_final_real(fixn_args):
 
     # load the captions, nouns, image filenames
     k1=0
+    f = open(os.path.join(args["output_metadata_folder"], "metadata"+ str(fixn_args.job_id) +".jsonl"), "w")
+    gdino_obj = GDINO(args)
+    # take one final step
     for item in list(img_filnames.values())[fixn_args.start_len:fixn_args.end_len]:
         img_lst = {}; k=0
+        # get the images
         for img_pth in item:
             try:
                 img_lst[k] = Image.open(os.path.join(args["output_img_folder"], img_pth))
             except:
                 img_lst[k] = Image.fromarray(np.zeros((224, 224, 3), dtype=np.uint8))
             k+=1
-        img_dataset["images"][k1] = list(img_lst.values())
-        k1+=1
+        img_dataset_images = list(img_lst.values())
 
-    ## task 3 - form the bounding boxes
-    # create batches
-    temp = correct_inputs(
-        [item for sublist in list(img_dataset["images"].values()) for item in sublist],
-        [item for sublist in nouns for item in sublist]
-    )
-    ents, imgs = GD_batcher(list(temp.keys()), list(temp.values()), 16)
+        ## task 3 - form the bounding boxes
+        # create batches
+        temp = correct_inputs(
+            img_dataset_images,
+            nouns[k1]
+        )
+        ents, imgs = GD_batcher(list(temp.keys()), list(temp.values()), 16)
 
-    gdino_obj = GDINO(args)
-    fin_out = {}; k=0
-    for idx in tqdm(range(len(ents)), desc="Processing BBox"):
-        out = gdino_obj.predict(ents[idx], imgs[idx], 0.3, 0.25,)
-        fin_out[k] = out
-        k+=1
-    del gdino_obj
-    torch.distributed.destroy_process_group()
-    torch.cuda.empty_cache()
+        fin_out = {}; k=0
+        for idx in tqdm(range(len(ents)), desc="Processing BBox"):
+            out = gdino_obj.predict(ents[idx], imgs[idx], 0.3, 0.25,)
+            fin_out[k] = out
+            k+=1
 
-    f = open(os.path.join(args["output_metadata_folder"], "metadata"+ str(fixn_args.job_id) +".jsonl"), "w")
-    bbox_lst = [j for i in fin_out.values() for j in i]
-    filname_lst = [j for i in img_dataset["file_name"].values() for j in i]
-    noun_lst = [j for i in nouns for j in i]
-    caps_lst = [j for i in prts["captions"].values() for j in i]
-    pretty_output(bbox_lst, filname_lst, noun_lst, caps_lst, f)
+        # append the items to the file
+        bbox_lst = [j for i in fin_out.values() for j in i]
+        filname_lst = list(img_dataset["file_name"].values())[k1]
+        noun_lst = nouns[k1]
+        caps_lst = caps[k1]
+        pretty_output(bbox_lst, filname_lst, noun_lst, caps_lst, f)
+
+        # update batch number
+        k1+=1 
+        torch.cuda.empty_cache()
+
     f.close()
     end_time = time.time()
     print(f"Total RUNTIME is {end_time - start_time}")
 
+    del gdino_obj
+    torch.distributed.destroy_process_group()
+    
+
 if __name__ == "__main__":
     fixn_args = parse_args()
     run_final_real(fixn_args)
-
-
