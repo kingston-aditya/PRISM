@@ -47,13 +47,13 @@ def run_final_real(fixn_args):
     ## b) align them if image exists else ignore it
     with open(os.path.join(args["output_metadata_folder"], "temp_imgs"+ str(fixn_args.job_id) +".json"), 'r') as f:
         img_filnames = json.load(f)
-    img_dataset["file_name"] = list(itertools.chain(*list(img_filnames.values())))
+    img_dataset["file_name"] = list(img_filnames.values())
 
     ## load the captions
     with open(os.path.join(args["output_metadata_folder"], "temp_caps"+ str(fixn_args.job_id) +".json"), 'r') as f:
         prts = json.load(f)
-    caps = list(itertools.chain(*list(prts["captions"].values())))
-    nouns = list(itertools.chain(*list(prts["nouns"].values())))
+    caps = list(prts["captions"].values())
+    nouns = list(prts["nouns"].values())
 
     # load the captions, nouns, image filenames
     k1=0
@@ -62,8 +62,8 @@ def run_final_real(fixn_args):
 
     # import pdb; pdb.set_trace()
     print("len of img dtaset", len(img_dataset["file_name"]))
-    offset =  (fixn_args.job_id - 1) * 750_000
-    for item in img_dataset["file_name"][fixn_args.start_len -  offset :fixn_args.end_len - offset]:
+
+    for item in img_dataset["file_name"][fixn_args.start_len:fixn_args.end_len]:
         
         img_lst = {}; k=0
         # get the images
@@ -77,11 +77,8 @@ def run_final_real(fixn_args):
 
         ## task 3 - form the bounding boxes
         # create batches
-        temp = correct_inputs(
-            img_dataset_images,
-            nouns[k1]
-        )
-        ents, imgs = GD_batcher(list(temp.values()), list(temp.keys()), 16)
+        temp = correct_inputs(img_dataset_images, nouns[k1])
+        ents, imgs = GD_batcher(list(temp.values()), list(temp.keys()), 4)
 
         fin_out = {}; k=0
         for idx in tqdm(range(len(ents)), desc="Processing BBox"):
@@ -90,7 +87,7 @@ def run_final_real(fixn_args):
                 out = gdino_obj.predict(imgs[idx], ents[idx], 0.3, 0.25,)
                 fin_out[k] = out
             except:
-                fin_out[k] = [{"scores": []} for _ in ents[idx]]
+                fin_out[k] = [{"scores": []}]*lt
             k+=1
 
         # append the items to the file
@@ -110,7 +107,6 @@ def run_final_real(fixn_args):
 
     del gdino_obj
     torch.distributed.destroy_process_group()
-    
 
 if __name__ == "__main__":
     fixn_args = parse_args()
