@@ -19,15 +19,17 @@ def GD_batcher(imgs, txts, batch_size):
         s+=1
 
     if len(txts)%batch_size != 0:
-        t[s+1] = txts[batch_size*(i+1):len(txts)]
-        t1[s+1] = imgs[batch_size*(i+1):len(imgs)]
+        t[s] = txts[batch_size*(s):len(txts)]
+        t1[s] = imgs[batch_size*(s):len(imgs)]
 
     return list(t.values()), list(t1.values())
 
 def pretty_output(bbox_lst, filname_lst, noun_lst, cap_lst, f):
     k = 0
     for i in range(len(noun_lst)):
-        object_temp = bbox_lst[k:k+len(noun_lst[i].split(","))]
+        # end_idx = min(len(noun_lst[i].split(",")), 3)
+        end_idx =len(noun_lst[i].split(","))
+        object_temp = bbox_lst[k:k+end_idx]
         atema = []
         for item in object_temp:
             if len(item['scores']) !=0:
@@ -40,7 +42,8 @@ def pretty_output(bbox_lst, filname_lst, noun_lst, cap_lst, f):
                 atema.append({"xmin": xmin, "ymin": ymin, "xmax": xmax, "ymax": ymax, "labels": labels, "img_pth": filname})
             else:
                 pass
+        #import pdb; pdb.set_trace()
         temp = {"file_name": filname_lst[i], "prompt": cap_lst[i], "object": atema[:3]}
-        k += len(noun_lst[i].split(","))
-        f.write(json.dumps(temp) + '\n')
+        k += end_idx
+        # f.write(json.dumps(temp) + '\n')
 

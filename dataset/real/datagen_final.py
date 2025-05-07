@@ -25,6 +25,7 @@ def parse_args():
 
 import sys
 sys.path.insert(1, args["repo_path"])
+
 from utilities.run_gd import GDINO
 from dataset.utils import correct_inputs, pretty_output, GD_batcher
 import pdb 
@@ -62,8 +63,8 @@ def run_final_real(fixn_args):
 
     # import pdb; pdb.set_trace()
     print("len of img dtaset", len(img_dataset["file_name"]))
-
-    for item in img_dataset["file_name"][fixn_args.start_len:fixn_args.end_len]:
+    offset = (fixn_args.job_id - 1 ) * 750_000
+    for item in img_dataset["file_name"][fixn_args.start_len - offset :fixn_args.end_len - offset]:
         
         img_lst = {}; k=0
         # get the images
@@ -96,7 +97,7 @@ def run_final_real(fixn_args):
         noun_lst = nouns[k1]
         caps_lst = caps[k1]
         pretty_output(bbox_lst, filname_lst, noun_lst, caps_lst, f)
-
+        
         # update batch number
         k1+=1 
         torch.cuda.empty_cache()
