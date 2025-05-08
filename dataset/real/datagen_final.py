@@ -19,6 +19,7 @@ def parse_args():
     parser.add_argument('--start_len', type=int, help='STart len')
     parser.add_argument('--end_len', type=int, help='End len')
     parser.add_argument('--job_id', type=int, help='job id')
+    parser.add_argument('--num_jobs', type=int, help='number of jobs thats gonna run')
 
     fixn_args = parser.parse_args()
     return fixn_args
@@ -50,15 +51,14 @@ def run_final_real(fixn_args):
         img_filnames = json.load(f)
     img_dataset["file_name"] = list(img_filnames.values())
 
-    ## load the captions
+    ## load the captions and nouns
     with open(os.path.join(args["output_metadata_folder"], "temp_caps"+ str(fixn_args.job_id) +".json"), 'r') as f:
         prts = json.load(f)
     caps = list(prts["captions"].values())
     nouns = list(prts["nouns"].values())
 
-    # load the captions, nouns, image filenames
-    k1=0
-    f = open(os.path.join(args["output_metadata_folder"], "metadata"+ str(fixn_args.job_id) +".jsonl"), "w")
+    # load the model
+    output_filname = os.path.join(args["output_metadata_folder"], "metadata"+ str(fixn_args.job_id) +".jsonl")
     gdino_obj = GDINO(args)
 
     # import pdb; pdb.set_trace()
@@ -66,38 +66,33 @@ def run_final_real(fixn_args):
     offset = (fixn_args.job_id - 1 ) * 750_000
     for item in img_dataset["file_name"][fixn_args.start_len - offset :fixn_args.end_len - offset]:
         
-        img_lst = []; k=0
+        img_lst = {}; k=0
         # get the images
-        for img_pth in item:
+        img_lst = {}
+        for k, img_pth in enumerate(item):
             try:
-                img_lst.append(Image.open(os.path.join(args["output_img_folder"], img_pth)))
+                img_lst[k] = Image.open(os.path.join(args["output_img_folder"], img_pth))
             except:
-                img_lst.append(Image.fromarray(np.zeros((224, 224, 3), dtype=np.uint8)))
+                img_lst[k] = Image.fromarray(np.zeros((224, 224, 3), dtype=np.uint8))
             k+=1
-        img_dataset_images = img_lst
+        img_dataset_images = list(img_lst.values())
 
-        ## task 3 - form the bounding boxes
         # create batches
-        expanded_imgs_list, expanded_txts_list = correct_inputs(img_dataset_images, nouns[k1])
-        ents, imgs = GD_batcher(expanded_imgs_list, expanded_txts_list, 16)
-        # import pdb; pdb.set_trace()
+        temp = correct_inputs(img_dataset_images, nouns[k1])
+        ents, imgs = GD_batcher(list(temp.values()), list(temp.keys()), 4)
+
         fin_out = {}; k=0
-        bbox_lst = []
         for idx in tqdm(range(len(ents)), desc="Processing BBox"):
             lt = len(ents[idx])
             try:
                 out = gdino_obj.predict(imgs[idx], ents[idx], 0.3, 0.25,)
-                # fin_out[k] = out
-                #print("this is fine", ents[idx])
-                bbox_lst.extend(out)
-            except Exception as e:
-                print("exception as ", e)
-                # fin_out[k] = [{"scores": []}]*lt
-                #print("not fine", ents[idx])
-                bbox_lst.extend([{"scores": []}]*lt)
+                fin_out[k] = out
+            except:
+                fin_out[k] = [{"scores": []}]*lt
             k+=1
+
         # append the items to the file
-        # bbox_lst = [j for i in fin_out.values() for j in i]
+        bbox_lst = [j for i in fin_out.values() for j in i]
         filname_lst = img_dataset["file_name"][k1]
         noun_lst = nouns[k1]
         caps_lst = caps[k1]
@@ -107,7 +102,6 @@ def run_final_real(fixn_args):
         k1+=1 
         torch.cuda.empty_cache()
 
-    f.close()
     end_time = time.time()
     print(f"Total RUNTIME is {end_time - start_time}")
 
