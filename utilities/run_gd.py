@@ -55,18 +55,20 @@ class GDINO(object):
                 item["scores"] = item["scores"].detach().to("cpu").tolist()
                 item["boxes"] = item["boxes"].detach().to("cpu")
 
-        results = gather_object(results) 
+        results = gather_object(results)
         return results
 
-if __name__ == "__main__":
-    args = {"cache_dir": "/nfshomes/asarkar6/trinity/model_weights/"}
-    gdino_obj = GDINO(args)
-    img = Image.open("/nfshomes/asarkar6/aditya/test_image.png")
-    img1 = Image.open("/nfshomes/asarkar6/trinity/trinity-images/4500.png")
+# if __name__ == "__main__":
+#     args = {"cache_dir": "/nfshomes/asarkar6/trinity/model_weights/"}
+#     gdino_obj = GDINO(args)
+#     img = Image.open("/nfshomes/asarkar6/aditya/test_image.png")
+#     img1 = Image.open("/nfshomes/asarkar6/trinity/trinity-images/4500.png")
 
-    fin_out = {}; k=0
-    imgs = [img, img1]*2
-    labs = ["lion", "road"]*2
-    out = gdino_obj.predict(imgs, labs, 0.3, 0.25,)
-    pdb.set_trace()
+#     fin_out = {}; k=0
+
+#     # total size 4
+#     imgs = [img, img1]*2
+#     labs = ["lion", "road"]*2
+#     out = gdino_obj.predict(imgs, labs, 0.3, 0.25,)
+    
     

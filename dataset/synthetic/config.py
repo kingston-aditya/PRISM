@@ -1,16 +1,16 @@
 def get_config():
     return {
-        "repo_path": "/data/home/saividyaranya/PRISM/",
+        "repo_path": "/nfshomes/asarkar6/aditya/PRISM/",
         "data_path": "/data/home/saividyaranya/PRISM/share-captioner_coco_lcs_sam_1246k_1107.json",
         "llm_model": "Qwen/Qwen2.5-72B-Instruct",
-        "cache_dir": "/data/home/saividyaranya/PRISM/cached_folder2",
+        "cache_dir": "/nfshomes/asarkar6/trinity/model_weights/",
         "batch_size": 512,
         "dataloader_num_workers": 1,
-        "is_sdxl": "False",
+        "is_sdxl": "True",
         "start_len": 0,
         "end_len": 25_000,
-        "output_metadata_folder": "/data/home/saividyaranya/PRISM/cached_folder2/metadata_folder",
-        "output_img_folder": "/data/home/saividyaranya/PRISM/cached_folder2/images/" ,
+        "output_metadata_folder": "/nfshomes/asarkar6/trinity/finale_data/",
+        "output_img_folder": "/nfshomes/asarkar6/trinity/finale_data/images/" ,
         "job_id": 1
     }
 

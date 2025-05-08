@@ -79,7 +79,7 @@ def run_final_real(fixn_args):
         ## task 3 - form the bounding boxes
         # create batches
         expanded_imgs_list, expanded_txts_list = correct_inputs(img_dataset_images, nouns[k1])
-        ents, imgs = GD_batcher(expanded_imgs_list, expanded_txts_list, 4)
+        ents, imgs = GD_batcher(expanded_imgs_list, expanded_txts_list, 16)
         # import pdb; pdb.set_trace()
         fin_out = {}; k=0
         bbox_lst = []
