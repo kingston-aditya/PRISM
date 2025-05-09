@@ -63,10 +63,9 @@ if __name__ == "__main__":
     start_time = time.time()
     fixn_args = parse_args()
 
-    cn = {"captions": {}, "nouns": {}}
+    cn = {"captions": [], "nouns": []}
     caps_dataset = ShareGPT(args["data_path"], args["batch_size"], fixn_args.start_len, fixn_args.end_len)
 
-    k=0
     llm_obj = run_qwen(args)
     for i, item in enumerate(tqdm(caps_dataset, desc="Processing")):
         if i == len(caps_dataset) - 1:
@@ -74,9 +73,9 @@ if __name__ == "__main__":
         print("something in for loop")
         r1 = llm_obj.forward(item, 0)
         r2 = llm_obj.forward(r1, 1)
-        cn["captions"][k] = r1
-        cn["nouns"][k] = r2
-        k+=1
+        cn["captions"].append(r1)
+        cn["nouns"].append(r2)
+ 
     print("end of for loop in run llm")
     del llm_obj
     # save dataset

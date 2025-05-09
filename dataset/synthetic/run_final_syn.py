@@ -37,8 +37,8 @@ def run_final_syn(fixn_args):
     ## task 1 - generate the images
     with open(os.path.join(args["output_metadata_folder"], "temp_caps" + str(fixn_args.job_id) + ".json"), 'r') as f:
         prts = json.load(f)
-    caps = list(prts["captions"].values())
-    nouns = list(prts["nouns"].values())
+    caps = prts["captions"]
+    nouns = prts["nouns"]
 
     ## choose the diffusion model
     if args["is_sdxl"] == "True":
