@@ -20,7 +20,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Use argparse for three params.")
     parser.add_argument('--start_len', type=int, help='STart len')
     parser.add_argument('--end_len', type=int, help='End len')
-    parser.add_argument('--job_id', type=int, help='job id')
+    parser.add_argument('--job_id', type=str, help='job id')
 
     fixn_args = parser.parse_args()
     return fixn_args
@@ -89,7 +89,7 @@ def run_final_syn(fixn_args):
         ## task 3 - form the bounding boxes
         # create batches
         expanded_imgs_list, expanded_txts_list = correct_inputs(img_dataset_images, nouns[k1])
-        ents, imgs = GD_batcher(expanded_imgs_list, expanded_txts_list, 16)
+        ents, imgs = GD_batcher(expanded_imgs_list, expanded_txts_list, 4)
         # import pdb; pdb.set_trace()
         
         bbox_lst = []
@@ -101,7 +101,7 @@ def run_final_syn(fixn_args):
                 #print("this is fine", ents[idx])
                 bbox_lst.extend(out)
             except Exception as e:
-                print("exception as ", e)
+                # print("exception as ", e)
                 # fin_out[k] = [{"scores": []}]*lt
                 #print("not fine", ents[idx])
                 bbox_lst.extend([{"scores": []}]*lt)

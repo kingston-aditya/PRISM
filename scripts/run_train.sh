@@ -2,8 +2,8 @@ accelerate launch --multi_gpu /nfshomes/asarkar6/aditya/PRISM/models/train_trini
   --pretrained_model_name_or_path="stabilityai/stable-diffusion-xl-base-1.0" \
   --pretrained_vae_model_name_or_path="madebyollin/sdxl-vae-fp16-fix" \
   --dataset_name="/nfshomes/asarkar6/trinity/train_data/" \
-  --output_dir="/nfshomes/asarkar6/scratch/" \
-  --cache_dir="/nfshomes/asarkar6/trinity/" \
+  --output_dir="/nfshomes/asarkar6/scratch/test_image/" \
+  --cache_dir="/nfshomes/asarkar6/trinity/model_weights/" \
   --caption_column="prompt" \
   --object_column="object" \
   --mask_typ="causal" \
@@ -14,6 +14,6 @@ accelerate launch --multi_gpu /nfshomes/asarkar6/aditya/PRISM/models/train_trini
   --lr_scheduler="constant" \
   --lr_warmup_steps=0 \
   --use_8bit_adam \
-  --max_train_steps=25 \
-  --checkpointing_steps=717 \
+  --num_train_epochs=4 \
+  --checkpointing_steps=2 \
   --seed="0"

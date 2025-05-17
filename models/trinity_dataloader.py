@@ -1,5 +1,4 @@
 from torch.utils.data import Dataset
-import torch
 
 class ObjectDataset(Dataset):
     def __init__(self, img_lst):

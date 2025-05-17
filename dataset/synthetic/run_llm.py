@@ -13,7 +13,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Use argparse for three params.")
     parser.add_argument('--start_len', type=int, help='Start len')
     parser.add_argument('--end_len', type=int, help='End len')
-    parser.add_argument('--job_id', type=int, help='job id')
+    parser.add_argument('--job_id', type=str, help='job id')
 
     fixn_args = parser.parse_args()
     return fixn_args

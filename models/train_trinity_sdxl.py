@@ -529,22 +529,25 @@ def check_count(batch, count):
     return torch.cat(temp_prompt, dim=0)
 
 def read_Trinity_dataset(json_pth):
+    # read multiple files
     f = open(os.path.join(args.dataset_name, json_pth), "r")
     json_obj = {"image":[], "prompt":[]}
     object_image = []
     count = []
     for line in f:
         temp = json.loads(line.strip())
-        json_obj["image"].append(Image.open(os.path.join(args.dataset_name, temp["file_name"])).convert("RGB"))
+        # json_obj["image"].append(Image.open().convert("RGB"))
+        json_obj["image"].append(os.path.join(args.dataset_name, temp["file_name"]))
         json_obj["prompt"].append(temp["prompt"])
         if temp["object"] is not None:
             count.append(len(temp["object"]))
             for j in temp["object"]:
-                x_min = int(j["xmin"])
-                x_max = int(j["xmax"])
-                y_min = int(j["ymin"])
-                y_max = int(j["ymax"])
-                object_image.append(Image.fromarray(np.asarray(Image.open(j["img_pth"]))[y_min:y_max, x_min:x_max]))
+                # x_min = int(j["xmin"])
+                # x_max = int(j["xmax"])
+                # y_min = int(j["ymin"])
+                # y_max = int(j["ymax"])
+                # object_image.append(Image.fromarray(np.asarray(Image.open(j["img_pth"]))[y_min:y_max, x_min:x_max]))
+                object_image.append(j)
         else:
             count.append(0)
     f.close()
@@ -554,10 +557,21 @@ def read_Trinity_dataset(json_pth):
 # encode object prompt - Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
 def encode_object(batch, img_encoders, img_tokenizers, count):
     object_embeds_list = []
+
+    # read a batch of image
+    temp_batch = []
+    for idx, j in enumerate(batch):
+        x_min = int(j["xmin"])
+        x_max = int(j["xmax"])
+        y_min = int(j["ymin"])
+        y_max = int(j["ymax"])
+        temp_batch.append(Image.fromarray(np.asarray(Image.open(j["img_pth"]))[y_min:y_max, x_min:x_max]))
+
+    # create the image embeddings
     with torch.no_grad():
         for img_tokenizer, img_encoder in zip(img_tokenizers, img_encoders):
             img_inputs = img_tokenizer(
-                images = batch,
+                images = temp_batch,
                 return_tensors="pt",
             )
             img_inputs = img_inputs.to(img_encoder.device)
@@ -769,15 +783,15 @@ def main(args):
     )
 
     # Load scheduler and models
-    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
+    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler", cache_dir=args.cache_dir)
 
     # Check for terminal SNR in combination with SNR Gamma
     # load text encoders
     text_encoder_one = text_encoder_cls_one.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision, variant=args.variant
+        args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision, variant=args.variant, cache_dir=args.cache_dir
     )
     text_encoder_two = text_encoder_cls_two.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="text_encoder_2", revision=args.revision, variant=args.variant
+        args.pretrained_model_name_or_path, subfolder="text_encoder_2", revision=args.revision, variant=args.variant, cache_dir=args.cache_dir
     )
 
     # load image encoders
@@ -794,9 +808,10 @@ def main(args):
         subfolder="vae" if args.pretrained_vae_model_name_or_path is None else None,
         revision=args.revision,
         variant=args.variant,
+        cache_dir=args.cache_dir
     )
     unet = UNet2DConditionModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision, variant=args.variant
+        args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision, variant=args.variant, cache_dir=args.cache_dir
     )
 
     # Freeze vae and text encoders.
@@ -887,7 +902,7 @@ def main(args):
 
     # preprocesses images, returns 
     def preprocess_train(examples):
-        images = [image.convert("RGB") for image in examples[args.image_column]]
+        images = [Image.open(image).convert("RGB") for image in examples[args.image_column]]
         # image aug
         original_sizes = []
         all_images = []
