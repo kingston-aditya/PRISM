@@ -27,6 +27,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from PIL import Image
 import json
+import glob
 
 import accelerate
 import datasets
@@ -530,27 +531,28 @@ def check_count(batch, count):
 
 def read_Trinity_dataset(json_pth):
     # read multiple files
-    f = open(os.path.join(args.dataset_name, json_pth), "r")
     json_obj = {"image":[], "prompt":[]}
     object_image = []
     count = []
-    for line in f:
-        temp = json.loads(line.strip())
-        # json_obj["image"].append(Image.open().convert("RGB"))
-        json_obj["image"].append(os.path.join(args.dataset_name, temp["file_name"]))
-        json_obj["prompt"].append(temp["prompt"])
-        if temp["object"] is not None:
-            count.append(len(temp["object"]))
-            for j in temp["object"]:
-                # x_min = int(j["xmin"])
-                # x_max = int(j["xmax"])
-                # y_min = int(j["ymin"])
-                # y_max = int(j["ymax"])
-                # object_image.append(Image.fromarray(np.asarray(Image.open(j["img_pth"]))[y_min:y_max, x_min:x_max]))
-                object_image.append(j)
-        else:
-            count.append(0)
-    f.close()
+    
+    for name in glob.glob("metadata*.jsonl"):
+        with open(os.path.join(args.dataset_name, name), "r") as f:
+            for line in f:
+                temp = json.loads(line.strip())
+                # json_obj["image"].append(Image.open().convert("RGB"))
+                json_obj["image"].append(os.path.join(args.dataset_name, temp["file_name"]))
+                json_obj["prompt"].append(temp["prompt"])
+                if temp["object"] is not None:
+                    count.append(len(temp["object"]))
+                    for j in temp["object"]:
+                        # x_min = int(j["xmin"])
+                        # x_max = int(j["xmax"])
+                        # y_min = int(j["ymin"])
+                        # y_max = int(j["ymax"])
+                        # object_image.append(Image.fromarray(np.asarray(Image.open(j["img_pth"]))[y_min:y_max, x_min:x_max]))
+                        object_image.append(j)
+                else:
+                    count.append(0)
     return json_obj, object_image, count
 
 
@@ -866,7 +868,7 @@ def main(args):
     # Get the embeddings and unload models
     # Step 1: get the object images - 
     # a) read the images and count - store all image embeds
-    json_obj, object_image, count = read_Trinity_dataset("metadata.jsonl")
+    json_obj, object_image, count = read_Trinity_dataset("metadata")
 
     object_dataset = ObjectDataset(object_image)
     dtel = torch.utils.data.DataLoader(
