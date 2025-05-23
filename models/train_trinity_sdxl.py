@@ -939,7 +939,7 @@ def main(args):
 
                 for i, model in enumerate(models):
                     if isinstance(model, EncoderModel):
-                        torch.save(model.state_dict(), os.path.join(output_dir, "trinity_checkpoint.pt"))
+                        torch.save(model.state_dict(), os.path.join(output_dir, "trinity_checkpoint"+str(i)+".pt"))
                     elif isinstance(model, ProjectLayer):
                         torch.save(model.state_dict(), os.path.join(output_dir, "project_checkpoint.pt"))
                     else:

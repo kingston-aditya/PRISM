@@ -15,5 +15,5 @@ accelerate launch --multi_gpu /nfshomes/asarkar6/aditya/PRISM/models/train_trini
   --lr_warmup_steps=0 \
   --use_8bit_adam \
   --num_train_epochs=4 \
-  --checkpointing_steps=2 \
+  --checkpointing_steps=100 \
   --seed="0"
