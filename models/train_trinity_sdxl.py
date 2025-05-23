@@ -535,7 +535,7 @@ def read_Trinity_dataset(json_pth):
     object_image = []
     count = []
     
-    for name in glob.glob("metadata*.jsonl"):
+    for name in glob.glob(os.path.join(args.dataset_name,"metadata*.jsonl")):
         with open(os.path.join(args.dataset_name, name), "r") as f:
             for line in f:
                 temp = json.loads(line.strip())
@@ -938,8 +938,13 @@ def main(args):
                     ema_unet.save_pretrained(os.path.join(output_dir, "unet_ema"))
 
                 for i, model in enumerate(models):
-                    model.save_pretrained(os.path.join(output_dir, "unet"))
-
+                    if isinstance(model, EncoderModel):
+                        torch.save(model.state_dict(), os.path.join(output_dir, "trinity_checkpoint.pt"))
+                    elif isinstance(model, ProjectLayer):
+                        torch.save(model.state_dict(), os.path.join(output_dir, "project_checkpoint.pt"))
+                    else:
+                        model.save_pretrained(os.path.join(output_dir, "unet"))
+                    
                     # make sure to pop weight so that corresponding model is not saved again
                     if weights:
                         weights.pop()
@@ -1331,7 +1336,7 @@ def main(args):
 
                         save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
                         accelerator.save_state(save_path)
-                        logger.info(f"Saved state to {save_path}")
+                        # logger.info(f"Saved state to {save_path}")
 
             logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             progress_bar.set_postfix(**logs)
