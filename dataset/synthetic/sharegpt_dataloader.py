@@ -22,8 +22,8 @@ def ShareGPT(json_pth, batch_size, num1, num2):
     for i in range(len(caps)//batch_size):
         t[i] = caps[batch_size*i:batch_size*(i+1)]
     
-    if len(caps)%batch_size != 0:
-        t[i+1] = caps[batch_size*(i+1):num2]
+        if len(caps)%batch_size != 0:
+            t[i+1] = caps[batch_size*(i+1):num2]
 
     return list(t.values())
 

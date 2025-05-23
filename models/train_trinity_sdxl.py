@@ -535,9 +535,12 @@ def read_Trinity_dataset(json_pth):
     object_image = []
     count = []
     
-    for name in glob.glob(os.path.join(args.dataset_name,"metadata*.jsonl")):
+    counter = 0
+    for name in glob.glob("/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again/metadata*.jsonl"):
         with open(os.path.join(args.dataset_name, name), "r") as f:
             for line in f:
+                if counter >= 512:  # Check if the counter has reached 512
+                    break 
                 temp = json.loads(line.strip())
                 # json_obj["image"].append(Image.open().convert("RGB"))
                 json_obj["image"].append(os.path.join(args.dataset_name, temp["file_name"]))
@@ -553,6 +556,7 @@ def read_Trinity_dataset(json_pth):
                         object_image.append(j)
                 else:
                     count.append(0)
+                counter += 1
     return json_obj, object_image, count
 
 

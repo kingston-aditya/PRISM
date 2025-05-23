@@ -1,9 +1,9 @@
-accelerate launch --multi_gpu /nfshomes/asarkar6/aditya/PRISM/models/train_trinity_sdxl.py \
+accelerate launch --multi_gpu /home/saividyaranya/PRISM/models/train_trinity_sdxl.py \
   --pretrained_model_name_or_path="stabilityai/stable-diffusion-xl-base-1.0" \
   --pretrained_vae_model_name_or_path="madebyollin/sdxl-vae-fp16-fix" \
-  --dataset_name="/nfshomes/asarkar6/trinity/train_data/" \
-  --output_dir="/nfshomes/asarkar6/scratch/test_image/" \
-  --cache_dir="/nfshomes/asarkar6/trinity/model_weights/" \
+  --dataset_name="/data/home/saividyaranya/PRISM/cached_folder_real/images_again/" \
+  --output_dir="/home/saividyaranya/PRISM/real_output/" \
+  --cache_dir="/home/saividyaranya/PRISM/real_output/cache_dir/" \
   --caption_column="prompt" \
   --object_column="object" \
   --mask_typ="causal" \

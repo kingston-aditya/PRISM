@@ -1,16 +1,16 @@
 # initialize config
 def get_config():
     return {
-        "repo_path": "/nfshomes/asarkar6/aditya/PRISM/",
+        "repo_path": "/data/home/saividyaranya/PRISM",
         "input_data_dir": "/fsx/mrs_shlok_sai/cc12m_v2/",
         "llm_model": "Qwen/Qwen2.5-72B-Instruct",
         "mllm_model": "Qwen/Qwen2.5-VL-72B-Instruct",
-        "cache_dir": "/nfshomes/asarkar6/trinity/model_weights/",
+        "cache_dir": "/data/home/saividyaranya/PRISM/cached_folder_real/",
         "batch_size": 512,
         "dataloader_num_workers": 1,
         "is_sdxl": "False",
-        "output_metadata_folder": "/nfshomes/asarkar6/trinity/finale_data/",
-        "output_img_folder": "/nfshomes/asarkar6/trinity/finale_data/images/",
+        "output_metadata_folder": "/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again",
+        "output_img_folder": "/data/home/saividyaranya/PRISM/cached_folder_real/images_again",
         "job_id": "",
         "start_len": 3_000_000,
         "end_len": 4_500_000
