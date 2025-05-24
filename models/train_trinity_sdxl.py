@@ -567,7 +567,14 @@ def encode_object(batch, img_encoders, img_tokenizers, count):
         x_max = int(j["xmax"])
         y_min = int(j["ymin"])
         y_max = int(j["ymax"])
-        temp_batch.append(Image.fromarray(np.asarray(Image.open(j["img_pth"]))[y_min:y_max, x_min:x_max]))
+        try:
+            obj_img = Image.fromarray(np.asarray(Image.open(j["img_pth"]))[y_min:y_max, x_min:x_max])
+        except:
+            obj_img = Image.fromarray(np.zeros((y_max-y_min, x_max-x_min)))
+            print("Corrupt !!!")
+            print(j["img_pth"])
+        
+        temp_batch.append(obj_img)
 
     # create the image embeddings
     with torch.no_grad():
@@ -846,12 +853,14 @@ def main(args):
             args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision, variant=args.variant
         )
         ema_unet = EMAModel(ema_unet.parameters(), model_cls=UNet2DConditionModel, model_config=ema_unet.config)
+    
     if args.enable_npu_flash_attention:
         if is_torch_npu_available():
             logger.info("npu flash attention enabled.")
             unet.enable_npu_flash_attention()
         else:
             raise ValueError("npu flash attention requires torch_npu extensions and is supported only on npu devices.")
+    
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
             import xformers
@@ -890,6 +899,7 @@ def main(args):
         temp1, temp2 = encode_object(batch, img_encoders, img_tokenizers, count)
         img_embeds.append(temp1)
         img_pembeds.append(temp2)
+
     object_prompt_embeds = torch.cat(img_embeds, dim=0)
     object_pooled_prompt_embeds = torch.cat(img_pembeds, dim=0)
 
@@ -904,8 +914,16 @@ def main(args):
 
     # preprocesses images, returns 
     def preprocess_train(examples):
-        images = [Image.open(image).convert("RGB") for image in examples[args.image_column]]
-        # image aug
+        images = []
+        for image_pth in examples[args.image_column]:
+            try:
+                images.append(Image.open(image_pth).convert("RGB"))
+            except:
+                images.append(Image.fromarray(np.zeros((224, 224))))
+                print("Corrupt !!!")
+                print(image_pth)
+        
+        # image augmentation
         original_sizes = []
         all_images = []
         crop_top_lefts = []
@@ -1014,13 +1032,18 @@ def main(args):
         
         temp = {"model_input":[], "prompt_embeds":[], "pooled_prompt_embeds":[], "original_sizes":[], "crop_top_lefts":[]}
         for batch in tqdm(dtel_1, desc="Processing"):
-            img_dict = preprocess_train(batch)
-            temp["original_sizes"].append(img_dict["original_sizes"])
-            temp["crop_top_lefts"].append(img_dict["crop_top_lefts"])
-            out1, out2 = encode_prompt(batch, text_encoders, tokenizers, args.proportion_empty_prompts, args.caption_column)
-            temp["model_input"].append(compute_vae_encodings(img_dict, vae))
-            temp["prompt_embeds"].append(out1)
-            temp["pooled_prompt_embeds"].append(out2.unsqueeze(1))
+            try:
+                img_dict = preprocess_train(batch)
+                temp["original_sizes"].append(img_dict["original_sizes"])
+                temp["crop_top_lefts"].append(img_dict["crop_top_lefts"])
+                out1, out2 = encode_prompt(batch, text_encoders, tokenizers, args.proportion_empty_prompts, args.caption_column)
+                temp["model_input"].append(compute_vae_encodings(img_dict, vae))
+                temp["prompt_embeds"].append(out1)
+                temp["pooled_prompt_embeds"].append(out2.unsqueeze(1))
+            except:
+                for image_pth in batch[args.image_column]:
+                    print(image_pth)
+
         temp["model_input"] = torch.cat(temp["model_input"], dim=0)
         temp["prompt_embeds"] = torch.cat(temp["prompt_embeds"], dim=0)
         temp["pooled_prompt_embeds"] = torch.cat(temp["pooled_prompt_embeds"], dim=0)
