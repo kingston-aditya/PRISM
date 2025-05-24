@@ -567,34 +567,55 @@ def encode_object(batch, img_encoders, img_tokenizers, count):
         x_max = int(j["xmax"])
         y_min = int(j["ymin"])
         y_max = int(j["ymax"])
-        try:
-            obj_img = Image.fromarray(np.asarray(Image.open(j["img_pth"]))[y_min:y_max, x_min:x_max])
-        except:
-            obj_img = Image.fromarray(np.zeros((y_max-y_min, x_max-x_min)))
-            print("Corrupt !!!")
+        if (x_max-x_min)*(y_max-y_min)>0:
+            try:
+                obj_img = Image.fromarray(np.asarray(Image.open(j["img_pth"]))[y_min:y_max, x_min:x_max])
+            except:
+                obj_img = Image.fromarray(np.zeros((224, 224)))
+                print("Corrupt !!!")
+                print(j["img_pth"])
+        else:
+            obj_img = Image.fromarray(np.zeros((224, 224)))
+            print("Too small image crop !!!")
             print(j["img_pth"])
         
         temp_batch.append(obj_img)
 
+    if len(temp_batch)==0:
+        print("!!! OBJECT IMAGES ARE EMPTY !!!")
+
     # create the image embeddings
     with torch.no_grad():
+        idx = 0
         for img_tokenizer, img_encoder in zip(img_tokenizers, img_encoders):
-            img_inputs = img_tokenizer(
-                images = temp_batch,
-                return_tensors="pt",
-            )
-            img_inputs = img_inputs.to(img_encoder.device)
-            img_embeds = img_encoder(**img_inputs, output_hidden_states=True, return_dict=False,)
-            
-            pooled_img_embeds = img_embeds[0]
-            img_embeds = img_embeds[-1][-2]
-            bs_embed, seq_len, _ = img_embeds.shape
-            img_embeds = img_embeds.view(bs_embed, seq_len, -1)
+            try:
+                img_inputs = img_tokenizer(
+                    images = temp_batch,
+                    return_tensors="pt",
+                )
+                img_inputs = img_inputs.to(img_encoder.device)
+                img_embeds = img_encoder(**img_inputs, output_hidden_states=True, return_dict=False,)
+
+                pooled_img_embeds = img_embeds[0]
+                img_embeds = img_embeds[-1][-2]
+                bs_embed, seq_len, _ = img_embeds.shape
+                img_embeds = img_embeds.view(bs_embed, seq_len, -1)
+            except Exception as e:
+                if idx == 0:
+                    img_embeds = torch.zeros([int(torch.cuda.device_count()*args.train_batch_size), 257, 1024])
+                else:
+                    img_embeds = torch.zeros([int(torch.cuda.device_count()*args.train_batch_size), 257, 1664])
+                pooled_img_embeds = img_embeds
+                
+                for j in temp_batch:
+                    print(j["img_pth"])
+                    print("corrupt !!!")
 
             # We are only ALWAYS interested in the pooled output of the final text encoder
+            idx+=1
             object_embeds_list.append(img_embeds)
 
-    # two text encoders - (197x3)x768 + (197x3)x1280 = (197x3)x2148
+    # two image encoders - 257x1024 + 257x1664 = 257x2688
     prompt_embeds = torch.concat(object_embeds_list, dim=-1)
     prompt_embeds = prompt_embeds.unsqueeze(1)
     pooled_img_embeds = pooled_img_embeds.view(bs_embed, -1)
@@ -608,35 +629,45 @@ def encode_prompt(batch, text_encoders, tokenizers, proportion_empty_prompts, ca
 
     captions = []
     for caption in prompt_batch:
-        if random.random() < proportion_empty_prompts:
-            captions.append("")
-        elif isinstance(caption, str):
+        if isinstance(caption, str):
             captions.append(caption)
         elif isinstance(caption, (list, np.ndarray)):
             # take a random caption if there are multiple
             captions.append(random.choice(caption) if is_train else caption[0])
+        else:
+            if random.random() < proportion_empty_prompts:
+                captions.append("")
 
     with torch.no_grad():
+        idx = 0
         for tokenizer, text_encoder in zip(tokenizers, text_encoders):
-            text_inputs = tokenizer(
-                captions,
-                padding="max_length",
-                max_length=tokenizer.model_max_length,
-                truncation=True,
-                return_tensors="pt",
-            )
-            text_input_ids = text_inputs.input_ids
-            prompt_embeds = text_encoder(
-                text_input_ids.to(text_encoder.device),
-                output_hidden_states=True,
-                return_dict=False,
-            )
-
-            # We are only ALWAYS interested in the pooled output of the final text encoder
-            pooled_prompt_embeds = prompt_embeds[0]
-            prompt_embeds = prompt_embeds[-1][-2]
-            bs_embed, seq_len, _ = prompt_embeds.shape
-            prompt_embeds = prompt_embeds.view(bs_embed, seq_len, -1)
+            try:
+                text_inputs = tokenizer(
+                    captions,
+                    padding="max_length",
+                    max_length=tokenizer.model_max_length,
+                    truncation=True,
+                    return_tensors="pt",
+                )
+                text_input_ids = text_inputs.input_ids
+                prompt_embeds = text_encoder(
+                    text_input_ids.to(text_encoder.device),
+                    output_hidden_states=True,
+                    return_dict=False,
+                )
+                # We are only ALWAYS interested in the pooled output of the final text encoder
+                pooled_prompt_embeds = prompt_embeds[0]
+                prompt_embeds = prompt_embeds[-1][-2]
+                bs_embed, seq_len, _ = prompt_embeds.shape
+                prompt_embeds = prompt_embeds.view(bs_embed, seq_len, -1)
+            except Exception as e:
+                if idx == 0:
+                    prompt_embeds = torch.zeros([int(torch.cuda.device_count()*args.train_batch_size), 77, 768])
+                else:
+                    prompt_embeds = torch.zeros([int(torch.cuda.device_count()*args.train_batch_size), 77, 1280])
+                pooled_prompt_embeds = prompt_embeds
+                print("corrupt captions!!!")
+            idx +=1
             prompt_embeds_list.append(prompt_embeds)
             
     # two text encoders - 77x768 + 77x1280 = 77x2148
@@ -895,7 +926,7 @@ def main(args):
     # c) get object image embeddings
     img_embeds = []
     img_pembeds = []
-    for batch in dtel:
+    for batch in tqdm(dtel, desc="Embedding Objects"):
         temp1, temp2 = encode_object(batch, img_encoders, img_tokenizers, count)
         img_embeds.append(temp1)
         img_pembeds.append(temp2)
@@ -915,6 +946,7 @@ def main(args):
     # preprocesses images, returns 
     def preprocess_train(examples):
         images = []
+        # read the image from files
         for image_pth in examples[args.image_column]:
             try:
                 images.append(Image.open(image_pth).convert("RGB"))
@@ -1031,18 +1063,17 @@ def main(args):
         )
         
         temp = {"model_input":[], "prompt_embeds":[], "pooled_prompt_embeds":[], "original_sizes":[], "crop_top_lefts":[]}
-        for batch in tqdm(dtel_1, desc="Processing"):
-            try:
-                img_dict = preprocess_train(batch)
-                temp["original_sizes"].append(img_dict["original_sizes"])
-                temp["crop_top_lefts"].append(img_dict["crop_top_lefts"])
-                out1, out2 = encode_prompt(batch, text_encoders, tokenizers, args.proportion_empty_prompts, args.caption_column)
-                temp["model_input"].append(compute_vae_encodings(img_dict, vae))
-                temp["prompt_embeds"].append(out1)
-                temp["pooled_prompt_embeds"].append(out2.unsqueeze(1))
-            except:
-                for image_pth in batch[args.image_column]:
-                    print(image_pth)
+        for batch in tqdm(dtel_1, desc="Final Processing"):
+            # image processing
+            img_dict = preprocess_train(batch)
+            temp["original_sizes"].append(img_dict["original_sizes"])
+            temp["crop_top_lefts"].append(img_dict["crop_top_lefts"])
+            temp["model_input"].append(compute_vae_encodings(img_dict, vae))
+            
+            # prompt encodings 
+            out1, out2 = encode_prompt(batch, text_encoders, tokenizers, args.proportion_empty_prompts, args.caption_column)
+            temp["prompt_embeds"].append(out1)
+            temp["pooled_prompt_embeds"].append(out2.unsqueeze(1))
 
         temp["model_input"] = torch.cat(temp["model_input"], dim=0)
         temp["prompt_embeds"] = torch.cat(temp["prompt_embeds"], dim=0)
