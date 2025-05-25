@@ -606,10 +606,6 @@ def encode_object(batch, img_encoders, img_tokenizers, count):
                 else:
                     img_embeds = torch.zeros([int(torch.cuda.device_count()*args.train_batch_size), 257, 1664])
                 pooled_img_embeds = img_embeds
-                
-                for j in temp_batch:
-                    print(j["img_pth"])
-                    print("corrupt !!!")
 
             # We are only ALWAYS interested in the pooled output of the final text encoder
             idx+=1
