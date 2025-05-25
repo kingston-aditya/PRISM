@@ -635,8 +635,7 @@ def encode_prompt(batch, text_encoders, tokenizers, proportion_empty_prompts, ca
             # take a random caption if there are multiple
             captions.append(random.choice(caption) if is_train else caption[0])
         else:
-            if random.random() < proportion_empty_prompts:
-                captions.append("")
+            pass
 
     with torch.no_grad():
         idx = 0
