@@ -54,5 +54,4 @@ def pretty_output(bbox_lst, filname_lst, noun_lst, cap_lst, f):
         # import pdb; pdb.set_trace()
         temp = {"file_name": filname_lst[i], "prompt": cap_lst[i], "object": atema[:3]}
         k += end_idx
-        print(temp)
         f.write(json.dumps(temp) + '\n')
