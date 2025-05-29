@@ -11,7 +11,7 @@ accelerate launch --multi_gpu /nfshomes/asarkar6/aditya/PRISM/models/train_trini
   --mask_typ="causal" \
   --blocks=4 \
   --mixed_precision="fp16" \
-  --train_batch_size=1 \
+  --train_batch_size=2 \
   --snr_gamma=5.0 \
   --resolution=1024 \
   --lr_scheduler="constant" \

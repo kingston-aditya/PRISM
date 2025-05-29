@@ -987,7 +987,7 @@ def main(args):
                     else:
                         encoded_object = torch.zeros((1,771,2688)).to(text_encoder_one.device)
                     object_prompt_embeds.append(encoded_object)
-                object_prompt_embeds = torch.stack(object_prompt_embeds).squeeze(0)
+                object_prompt_embeds = torch.stack(object_prompt_embeds).squeeze()
 
                 # get multimodal prompts
                 txt_tok_len = prompt_embeds.shape[-2]
