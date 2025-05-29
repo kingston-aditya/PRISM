@@ -4,6 +4,7 @@ from torchvision import transforms
 
 # from huggingface_hub import login
 # login(token = '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')
+from PIL import Image
 
 from diffusers import FluxPipeline, DiffusionPipeline 
 from accelerate import PartialState
@@ -52,8 +53,33 @@ class run_sdxl(object):
         return img
 
 if __name__ == "__main__":
-    prts = ["A majestic lion jumping from a big stone at night.", "A majestic cat jumping from a big stone at night.", "A majestic cat jumping from a big stone in morning."]
-    img = run_sdxl().forward(prts)
+    args = {"cache_dir": "/nfshomes/asarkar6/trinity/model_weights/"}
+    prts1 = [
+        "A serene beach at sunset with soft waves, pastel skies, and gentle clouds.",
+        "A futuristic city skyline at dusk, with glowing neon lights and towering skyscrapers.",
+        "A peaceful forest with tall trees, misty atmosphere, and rays of sunlight filtering through the leaves.",
+        "A rolling grassy meadow under a bright blue sky with a few fluffy clouds.",
+        "A starry night sky with a galaxy in the distance, glowing nebulae, and a distant planet.",
+    ]
+    prts2 = [
+        "A cozy winter scene with snow-covered trees, soft snowfall, and a warm glow in the distance.",
+        "A vast desert landscape with golden sand dunes stretching to the horizon, under a clear sky.",
+        "A calm mountain lake surrounded by dense pine forests, with clear blue skies and reflection of mountains.",
+        "A dreamy cloudscape with cotton candy clouds in pastel pinks, purples, and blues.",
+        "A lush tropical jungle with vibrant green foliage, exotic flowers, and a waterfall in the background."
+    ]
+    img1 = run_sdxl(args).forward(prts1)
+    img2 = run_sdxl(args).forward(prts2)
+
+    idx = 0
+    for image in img1:
+        image.save("/nfshomes/asarkar6/aditya/PRISM/backgrounds/"+str(idx)+".jpg")
+        idx+=1
+
+    for image in img2:
+        image.save("/nfshomes/asarkar6/aditya/PRISM/backgrounds/"+str(idx)+".jpg")
+        idx+=1
+
     
 
 

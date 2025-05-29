@@ -3,10 +3,11 @@ accelerate launch --multi_gpu /nfshomes/asarkar6/aditya/PRISM/models/train_trini
   --dataset_name="/nfshomes/asarkar6/trinity/train_data/" \
   --output_dir="/nfshomes/asarkar6/scratch/test_image/" \
   --cache_dir="/nfshomes/asarkar6/trinity/model_weights/" \
+  --bg_dir="/nfshomes/asarkar6/aditya/PRISM/backgrounds/" \
   --caption_column="prompt" \
   --resolution=1024 \
   --random_flip \
-  --train_batch_size=1 \
+  --train_batch_size=2 \
   --num_train_epochs=4 \
   --checkpointing_steps=100 \
   --learning_rate=1e-06 \
