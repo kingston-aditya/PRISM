@@ -480,21 +480,24 @@ def read_Trinity_dataset():
     # read multiple files
     json_obj = {"image":[], "prompt":[], "object":[]}
 
-    for name in glob.glob(os.path.join(args.dataset_name,"metadata*.jsonl")):
-        with open(os.path.join(args.dataset_name, name), "r") as f:
+    for name in glob.glob(os.path.join("/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again/","metadata2.jsonl_dup")):
+        with open(os.path.join("/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again/", name), "r") as f:
+            # print("name  is:  ", name)
             for line in f:
-                temp = json.loads(line.strip())
-                # saves the image
-                json_obj["image"].append(os.path.join(args.dataset_name, temp["file_name"]))
-
-                # saves the text prompt
-                json_obj["prompt"].append(temp["prompt"])
-
-                # saves the object
-                if temp["object"] is not None:
-                    json_obj["object"].append(temp["object"])
-                else:
-                    json_obj["object"].append([])
+                print("line strip:  ",line.strip())
+                try:
+                    temp = json.loads(line.strip())
+                    # saves the image
+                    json_obj["image"].append(temp["file_name"])
+                    # saves the text prompt
+                    json_obj["prompt"].append(temp["prompt"])
+                    # saves the object
+                    if temp["object"] is not None:
+                        json_obj["object"].append(temp["object"])
+                    else:
+                        json_obj["object"].append([])
+                except json.JSONDecodeError as e:
+                    print(f"Failed to decode JSON for line: {line.strip()} with error: {e}")
 
     return json_obj
 
@@ -886,7 +889,7 @@ def main(args):
         batch_size=args.train_batch_size,
         num_workers=args.dataloader_num_workers,
     )
-
+    print("train dataloader len", len(train_dataloader))
     # load the transformer
     trinity = EncoderModel(2048, 2048, num_blocks=args.blocks)
     proj_layer = ProjectLayer(2048, 2688)
@@ -923,6 +926,7 @@ def main(args):
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+    print("num update steps", num_update_steps_per_epoch, args.gradient_accumulation_steps)
     if overrode_max_train_steps:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
     # Afterwards we recalculate our number of training epochs
