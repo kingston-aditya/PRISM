@@ -530,11 +530,10 @@ def encode_object(batch, img_encoders, img_tokenizers):
                 bs_embed, seq_len, _ = img_embeds.shape
                 img_embeds = img_embeds.view(bs_embed, seq_len, -1)
             except Exception as e:
-                print("Epsilon Padding happening - L532")
                 if idx == 0:
                     img_embeds = torch.randn_like(torch.zeros([len(batch), 257, 1024])) * 1e-3
                 else:
-                    img_embeds = torch.randn_like(torch.zeros([len(batch), 257, 1024])) * 1e-3
+                    img_embeds = torch.randn_like(torch.zeros([len(batch), 257, 1664])) * 1e-3
                 bs_embed, seq_len, _ = img_embeds.shape
                 img_embeds = img_embeds.view(bs_embed, seq_len, -1)
 
@@ -1008,7 +1007,7 @@ def main(args):
                             pass
                         encoded_object = encoded_object.to(accelerator.device)
                     else:
-                        print("Epsilon padding happening !!! L-1011")
+                        print("Eps-pad - Corrupt Object !!! L-1011")
                         encoded_object = torch.randn_like(torch.zeros((1,771,2688))) * 1e-3
                         encoded_object = encoded_object.to(text_encoder_one.device)
 

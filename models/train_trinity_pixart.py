@@ -545,9 +545,9 @@ def encode_object(batch, img_encoders, img_tokenizers):
                 img_embeds = img_embeds.view(bs_embed, seq_len, -1)
             except Exception as e:
                 if idx == 0:
-                    img_embeds = torch.zeros([len(batch), 257, 1024])
+                    img_embeds = torch.randn_like(torch.zeros([len(batch), 257, 1024])) * 1e-3
                 else:
-                    img_embeds = torch.zeros([len(batch), 257, 1664])
+                    img_embeds = torch.randn_like(torch.zeros([len(batch), 257, 1664])) * 1e-3
                 bs_embed, seq_len, _ = img_embeds.shape
                 img_embeds = img_embeds.view(bs_embed, seq_len, -1)
 
@@ -960,6 +960,10 @@ def main(args):
                     resolution = resolution.to(dtype=weight_dtype, device=latents.device)
                     aspect_ratio = aspect_ratio.to(dtype=weight_dtype, device=latents.device)
                     added_cond_kwargs = {"resolution": resolution, "aspect_ratio": aspect_ratio}
+
+                if torch.isnan(trinity_embeds).any():
+                    print("!!! NAN INPUTS!!!")
+                    continue
 
                 # Predict the noise residual and compute loss
                 model_pred = transformer(noisy_latents,

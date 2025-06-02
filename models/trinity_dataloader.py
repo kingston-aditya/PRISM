@@ -104,7 +104,7 @@ class SDXLTrainDataset(Dataset):
                 y_min = int(item["ymin"])
                 y_max = min(int(item["ymax"]), self.bg.size[0])
 
-                if (x_max-x_min)*(y_max-y_min)>0:
+                if (x_max-x_min)*(y_max-y_min)>0 and y_max>=y_min and x_max>=x_min:
                     trans_y, trans_x = self.bg.size[0]//2 - (y_min+y_max)//2, self.bg.size[1]//2 - (x_min+x_max)//2
                     obj_img = np.asarray(img_mat)[y_min:y_max, x_min:x_max]
                     temp_img = np.asarray(self.bg)
@@ -181,7 +181,7 @@ class PixartTrainDataset(Dataset):
                 y_min = int(item["ymin"])
                 y_max = min(int(item["ymax"]), self.bg.size[0])
 
-                if (x_max-x_min)*(y_max-y_min)>0:
+                if (x_max-x_min)*(y_max-y_min)>0 and y_max>=y_min and x_max>=x_min:
                     trans_y, trans_x = self.bg.size[0]//2 - (y_min+y_max)//2, self.bg.size[1]//2 - (x_min+x_max)//2
                     obj_img = np.asarray(img_mat)[y_min:y_max, x_min:x_max]
                     temp_img = np.asarray(self.bg)
