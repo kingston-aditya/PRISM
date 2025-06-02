@@ -166,6 +166,13 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--backup",
+        type=str,
+        default="/nfshomes/asarkar6/aditya/PRISM/backup/",
+        help="The directory where the downloaded models and datasets will be stored.",
+    )
+
+    parser.add_argument(
         "--wanna_bg",
         type=int,
         default=0,
@@ -497,22 +504,23 @@ def read_Trinity_dataset():
     # read multiple files
     json_obj = {"image":[], "prompt":[], "object":[]}
 
-    for name in glob.glob(os.path.join(args.dataset_name,"metadata*.jsonl")):
-        with open(os.path.join(args.dataset_name, name), "r") as f:
+    for name in glob.glob(os.path.join("/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again/","metadata2.jsonl_dup")):
+        with open(os.path.join("/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again/", name), "r") as f:
             for line in f:
-                temp = json.loads(line.strip())
-                # saves the image
-                json_obj["image"].append(os.path.join(args.dataset_name, temp["file_name"]))
-
-                # saves the text prompt
-                json_obj["prompt"].append(temp["prompt"])
-
-                # saves the object
-                if temp["object"] is not None:
-                    json_obj["object"].append(temp["object"])
-                else:
-                    json_obj["object"].append([])
-
+                print("line strip:  ",line.strip())
+                try:
+                    temp = json.loads(line.strip())
+                    # saves the image
+                    json_obj["image"].append(temp["file_name"])
+                    # saves the text prompt
+                    json_obj["prompt"].append(temp["prompt"])
+                    # saves the object
+                    if temp["object"] is not None:
+                        json_obj["object"].append(temp["object"])
+                    else:
+                        json_obj["object"].append([])
+                except json.JSONDecodeError as e:
+                    print(f"Failed to decode JSON for line: {line.strip()} with error: {e}")
     return json_obj
 
 
@@ -872,18 +880,31 @@ def main(args):
                 for _, item in enumerate(batch["object_prompt_embeds"]):
                     if len(item) > 0:
                         encoded_object = encode_object(item, img_encoders, img_tokenizers)
-                        embed_size = encoded_object.shape[-2]
-                        encoded_object = F.pad(encoded_object, (0, 0, 0, 771 - embed_size), mode='constant', value=0).to(accelerator.device)
+                        tok_sz = encoded_object.shape[-2]//len(item)
+                        if len(item) == 2:
+                            encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
+                        elif len(item) == 1:
+                            encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0), encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
+                        else:
+                            pass
+                        encoded_object = encoded_object.to(accelerator.device)
                     else:
-                        encoded_object = torch.zeros((1,771,2688)).to(text_encoder.device)
+                        print("Epsilon padding happening !!! L-1011")
+                        encoded_object = torch.randn_like(torch.zeros((1,771,2688))) * 1e-3
+                        encoded_object = encoded_object.to(text_encoder.device)
                     object_prompt_embeds.append(encoded_object)
                 object_prompt_embeds = torch.stack(object_prompt_embeds).squeeze()
 
                 # get multimodal prompts
                 txt_tok_len = prompt_embeds.shape[-2]
                 img_tok_len = object_prompt_embeds.shape[-2]
-                # ForkedPdb().set_trace()
-                object_prompt_embeds = proj_layer(object_prompt_embeds)
+
+                # normalize everything
+                object_prompt_embeds = object_prompt_embeds/torch.norm(object_prompt_embeds, p=2, dim=-1, keepdim=True)
+                prompt_embeds = prompt_embeds/torch.norm(prompt_embeds, p=2, dim=-1, keepdim=True)
+                
+                with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
+                    object_prompt_embeds = proj_layer(object_prompt_embeds)
                 prompt_embeds = multimodal_encode_prompt(prompt_embeds, object_prompt_embeds)
                 prompt_embeds = prompt_embeds.to(accelerator.device, dtype=weight_dtype)
                 
@@ -893,7 +914,8 @@ def main(args):
 
                 # get the trinity embeds
                 # trinity_embeds = prompt_embeds
-                trinity_embeds = trinity(prompt_embeds, prompt_embeds, txt_tok_len, img_tok_len, typ=args.mask_typ)
+                with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
+                    trinity_embeds = trinity(prompt_embeds, prompt_embeds, txt_tok_len, img_tok_len, typ=args.mask_typ)
 
                 # Convert images to latent space
                 img_pixel_vals = batch["pixel_values"].to(accelerator.device)

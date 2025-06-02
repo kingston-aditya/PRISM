@@ -5,6 +5,7 @@ accelerate launch --multi_gpu /nfshomes/asarkar6/aditya/PRISM/models/train_trini
   --output_dir="/nfshomes/asarkar6/scratch/test_image/" \
   --cache_dir="/nfshomes/asarkar6/trinity/model_weights/" \
   --bg_dir="/nfshomes/asarkar6/aditya/PRISM/backgrounds/" \
+  --backup="/nfshomes/asarkar6/aditya/PRISM/backup/" \
   --wanna_bg=1 \
   --caption_column="prompt" \
   --object_column="object" \

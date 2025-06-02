@@ -45,8 +45,12 @@ from torchvision.transforms.functional import crop
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, PretrainedConfig
 
+from config import get_config
+fixn_args = get_config()
+
 import sys
-sys.path.insert(1, "/nfshomes/asarkar6/aditya/PRISM/")
+sys.path.insert(1, fixn_args["repo_path"])
+
 import diffusers
 from diffusers import (
     AutoencoderKL,
@@ -240,6 +244,12 @@ def parse_args(input_args=None):
         "--cache_dir",
         type=str,
         default=None,
+        help="The directory where the downloaded models and datasets will be stored.",
+    )
+    parser.add_argument(
+        "--backup",
+        type=str,
+        default="/nfshomes/asarkar6/aditya/PRISM/backup/",
         help="The directory where the downloaded models and datasets will be stored.",
     )
     parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
@@ -482,7 +492,6 @@ def read_Trinity_dataset():
 
     for name in glob.glob(os.path.join("/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again/","metadata2.jsonl_dup")):
         with open(os.path.join("/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again/", name), "r") as f:
-            # print("name  is:  ", name)
             for line in f:
                 print("line strip:  ",line.strip())
                 try:
@@ -498,7 +507,6 @@ def read_Trinity_dataset():
                         json_obj["object"].append([])
                 except json.JSONDecodeError as e:
                     print(f"Failed to decode JSON for line: {line.strip()} with error: {e}")
-
     return json_obj
 
 
@@ -522,10 +530,11 @@ def encode_object(batch, img_encoders, img_tokenizers):
                 bs_embed, seq_len, _ = img_embeds.shape
                 img_embeds = img_embeds.view(bs_embed, seq_len, -1)
             except Exception as e:
+                print("Epsilon Padding happening - L532")
                 if idx == 0:
-                    img_embeds = torch.zeros([len(batch), 257, 1024])
+                    img_embeds = torch.randn_like(torch.zeros([len(batch), 257, 1024])) * 1e-3
                 else:
-                    img_embeds = torch.zeros([len(batch), 257, 1664])
+                    img_embeds = torch.randn_like(torch.zeros([len(batch), 257, 1024])) * 1e-3
                 bs_embed, seq_len, _ = img_embeds.shape
                 img_embeds = img_embeds.view(bs_embed, seq_len, -1)
 
@@ -889,7 +898,7 @@ def main(args):
         batch_size=args.train_batch_size,
         num_workers=args.dataloader_num_workers,
     )
-    print("train dataloader len", len(train_dataloader))
+
     # load the transformer
     trinity = EncoderModel(2048, 2048, num_blocks=args.blocks)
     proj_layer = ProjectLayer(2048, 2688)
@@ -926,7 +935,6 @@ def main(args):
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
-    print("num update steps", num_update_steps_per_epoch, args.gradient_accumulation_steps)
     if overrode_max_train_steps:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
     # Afterwards we recalculate our number of training epochs
@@ -970,6 +978,11 @@ def main(args):
             with accelerator.accumulate(unet):
                 # Convert images to latent space
                 # pixel_values = batch["pixel_values"].to(dtype=weight_dtype)
+                # try:
+                #     batch = mbatch
+                # except RuntimeError as e:
+                #     print(f"Dataset error in batch {step}: {e}")
+                #     continue
 
                 batch["original_sizes"], batch["crop_top_lefts"], batch["pixel_values"] = preprocess_train(batch["pixel_values"], args)
                 batch["pixel_values"] = torch.stack(batch["pixel_values"])
@@ -986,23 +999,45 @@ def main(args):
                 for _, item in enumerate(batch["object_prompt_embeds"]):
                     if len(item) > 0:
                         encoded_object = encode_object(item, img_encoders, img_tokenizers)
-                        embed_size = encoded_object.shape[-2]
-                        encoded_object = F.pad(encoded_object, (0, 0, 0, 771 - embed_size), mode='constant', value=0).to(accelerator.device)
+                        tok_sz = encoded_object.shape[-2]//len(item)
+                        if len(item) == 1:
+                            encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0), encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
+                        elif len(item) == 2:
+                            encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
+                        else:
+                            pass
+                        encoded_object = encoded_object.to(accelerator.device)
                     else:
-                        encoded_object = torch.zeros((1,771,2688)).to(text_encoder_one.device)
+                        print("Epsilon padding happening !!! L-1011")
+                        encoded_object = torch.randn_like(torch.zeros((1,771,2688))) * 1e-3
+                        encoded_object = encoded_object.to(text_encoder_one.device)
+
                     object_prompt_embeds.append(encoded_object)
                 object_prompt_embeds = torch.stack(object_prompt_embeds).squeeze()
 
                 # get multimodal prompts
                 txt_tok_len = prompt_embeds.shape[-2]
                 img_tok_len = object_prompt_embeds.shape[-2]
-                object_prompt_embeds = proj_layer(object_prompt_embeds)
+
+                # normalize everything
+                object_prompt_embeds = object_prompt_embeds/torch.norm(object_prompt_embeds, p=2, dim=-1, keepdim=True)
+                prompt_embeds = prompt_embeds/torch.norm(prompt_embeds, p=2, dim=-1, keepdim=True)
+
+                with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
+                    object_prompt_embeds = proj_layer(object_prompt_embeds)
                 prompt_embeds = multimodal_encode_prompt(prompt_embeds, object_prompt_embeds)
                 prompt_embeds = prompt_embeds.to(accelerator.device, dtype=weight_dtype)
 
+                # normalize everything
+                prompt_embeds = prompt_embeds/torch.norm(prompt_embeds, p=2, dim=-1, keepdim=True)
+
                 # get the trinity embeds
                 # trinity_embeds = prompt_embeds
-                trinity_embeds = trinity(prompt_embeds, prompt_embeds, txt_tok_len, img_tok_len, typ=args.mask_typ)
+                with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
+                    trinity_embeds = trinity(prompt_embeds, prompt_embeds, txt_tok_len, img_tok_len, typ=args.mask_typ)
+                
+                # normalize everything
+                trinity_embeds = trinity_embeds/torch.norm(trinity_embeds, p=2, dim=-1, keepdim=True)
 
                 model_input = vae.encode(batch["pixel_values"].to(accelerator.device, dtype=weight_dtype)).latent_dist.sample()
                 model_input = model_input * vae.config.scaling_factor
@@ -1040,6 +1075,10 @@ def main(args):
                 add_time_ids = torch.cat(
                     [compute_time_ids(s, c) for s, c in zip(batch["original_sizes"], batch["crop_top_lefts"])]
                 )
+
+                if torch.isnan(trinity_embeds).any() or torch.isnan(pooled_prompt_embeds).any():
+                    print("!!! NAN INPUTS!!!")
+                    continue
 
                 # Predict the noise residual
                 unet_added_conditions = {"time_ids": add_time_ids}
