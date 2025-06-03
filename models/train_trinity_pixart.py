@@ -504,10 +504,9 @@ def read_Trinity_dataset():
     # read multiple files
     json_obj = {"image":[], "prompt":[], "object":[]}
 
-    for name in glob.glob(os.path.join("/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again/","metadata2.jsonl_dup")):
-        with open(os.path.join("/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again/", name), "r") as f:
+    for name in glob.glob("/nfshomes/asarkar6/trinity/train_data/*.jsonl"):
+        with open(os.path.join("/nfshomes/asarkar6/trinity/train_data/", name), "r") as f:
             for line in f:
-                print("line strip:  ",line.strip())
                 try:
                     temp = json.loads(line.strip())
                     # saves the image
@@ -737,9 +736,18 @@ def main(args):
             transformer_ = accelerator.unwrap_model(transformer)
             transformer_.load_adapter(input_dir, "default", is_trainable=True)
 
+            # load the trinity and proj layer
+            # load trinity and projection layer
+            trinity.load_state_dict(torch.load(os.path.join(input_dir, "trinity_checkpoint"+".pt"), weights_only=True))
+            proj_layer.load_state_dict(torch.load(os.path.join(input_dir, "proj_checkpoint"+".pt"), weights_only=True))
+
             for _ in range(len(models)):
                 # pop models so that they are not loaded again
                 models.pop()
+
+            if args.mixed_precision == "fp16":
+                models = [trinity, proj_layer]
+                cast_training_params(models, dtype=torch.float32)
 
         accelerator.register_save_state_pre_hook(save_model_hook)
         accelerator.register_load_state_pre_hook(load_model_hook)
@@ -848,11 +856,19 @@ def main(args):
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
-    
-    global_step = 0
-    first_epoch = 0
-    initial_global_step = 0
 
+    if args.resume_from_checkpoint == "latest":
+        path_name = sorted(glob.glob(os.path.join(args.output_dir, "pixart-checkpoint-*")), key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
+        accelerator.print(f"Resuming from checkpoint {path_name}")
+        accelerator.load_state(os.path.join(args.output_dir, path_name))
+        global_step = int(path_name.split("-")[-1])
+        initial_global_step = global_step
+        first_epoch = global_step // num_update_steps_per_epoch
+    else:
+        initial_global_step = 0
+        first_epoch = 0
+        global_step = 0
+    
     progress_bar = tqdm(
         range(0, args.max_train_steps),
         initial=initial_global_step,

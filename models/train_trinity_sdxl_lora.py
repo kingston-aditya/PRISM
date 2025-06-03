@@ -490,10 +490,9 @@ def read_Trinity_dataset():
     # read multiple files
     json_obj = {"image":[], "prompt":[], "object":[]}
 
-    for name in glob.glob(os.path.join("/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again/","metadata2.jsonl_dup")):
-        with open(os.path.join("/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again/", name), "r") as f:
+    for name in glob.glob("/nfshomes/asarkar6/trinity/train_data/*.jsonl"):
+        with open(os.path.join("/nfshomes/asarkar6/trinity/train_data/", name), "r") as f:
             for line in f:
-                print("line strip:  ",line.strip())
                 try:
                     temp = json.loads(line.strip())
                     # saves the image
@@ -778,8 +777,6 @@ def main(args):
 
     def load_model_hook(models, input_dir):
         unet_ = None
-        text_encoder_one_ = None
-        text_encoder_two_ = None
 
         while len(models) > 0:
             model = models.pop()
@@ -787,12 +784,14 @@ def main(args):
             if isinstance(model, type(unwrap_model(unet))):
                 unet_ = model
             else:
-                raise ValueError(f"unexpected save model: {model.__class__}")
+                # no need to load the trinity adapters
+                pass
 
         lora_state_dict, _ = StableDiffusionLoraLoaderMixin.lora_state_dict(input_dir)
         unet_state_dict = {f"{k.replace('unet.', '')}": v for k, v in lora_state_dict.items() if k.startswith("unet.")}
         unet_state_dict = convert_unet_state_dict_to_peft(unet_state_dict)
         incompatible_keys = set_peft_model_state_dict(unet_, unet_state_dict, adapter_name="default")
+        
         if incompatible_keys is not None:
             # check only for unexpected keys
             unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
@@ -801,14 +800,16 @@ def main(args):
                     f"Loading adapter weights from state_dict led to unexpected keys not found in the model: "
                     f" {unexpected_keys}. "
                 )
+        
+        # load trinity and projection layer
+        trinity.load_state_dict(torch.load(os.path.join(input_dir, "trinity_checkpoint"+".pt"), weights_only=True))
+        proj_layer.load_state_dict(torch.load(os.path.join(input_dir, "proj_checkpoint"+".pt"), weights_only=True))
 
         # Make sure the trainable params are in float32. This is again needed since the base models
         # are in `weight_dtype`. More details:
         # https://github.com/huggingface/diffusers/pull/6514#discussion_r1449796804
         if args.mixed_precision == "fp16":
-            models = [unet_]
-            if args.train_text_encoder:
-                models.extend([text_encoder_one_, text_encoder_two_])
+            models = [unet_, trinity, proj_layer]
             cast_training_params(models, dtype=torch.float32)
 
     accelerator.register_save_state_pre_hook(save_model_hook)
@@ -816,10 +817,8 @@ def main(args):
 
     if args.gradient_checkpointing:
         unet.enable_gradient_checkpointing()
-        if args.train_text_encoder:
-            text_encoder_one.gradient_checkpointing_enable()
-            text_encoder_two.gradient_checkpointing_enable()
-
+        # we can do trinity checkpointing
+        
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
     if args.allow_tf32:
@@ -936,6 +935,7 @@ def main(args):
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     if overrode_max_train_steps:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
+
     # Afterwards we recalculate our number of training epochs
     args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
 
@@ -957,7 +957,17 @@ def main(args):
     global_step = 0
     first_epoch = 0
 
-    initial_global_step = 0
+    if args.resume_from_checkpoint == "latest":
+        path_name = sorted(glob.glob(os.path.join(args.output_dir, "sdxl-checkpoint-*")), key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
+        accelerator.print(f"Resuming from checkpoint {path_name}")
+        accelerator.load_state(os.path.join(args.output_dir, path_name))
+        global_step = int(path_name.split("-")[-1])
+        initial_global_step = global_step
+        first_epoch = global_step // num_update_steps_per_epoch
+    else:
+        initial_global_step = 0
+        first_epoch = 0
+        global_step = 0
 
     progress_bar = tqdm(
         range(0, args.max_train_steps),

@@ -79,7 +79,7 @@ class SDXLTrainDataset(Dataset):
         # get the pixel values
         flag = 0
         try:
-            img_mat = Image.open(self.temp["image"][idx]).convert("RGB")
+            img_mat = Image.open(os.path.join(self.args.dataset_name, self.temp["image"][idx])).convert("RGB")
         except Exception as e:
             flag = 1
         
@@ -162,7 +162,7 @@ class PixartTrainDataset(Dataset):
         # get the pixel values
         flag = 0
         try:
-            img_mat = Image.open(self.temp["image"][idx]).convert("RGB")
+            img_mat = Image.open(os.path.join(self.args.dataset_name, self.temp["image"][idx])).convert("RGB")
         except RuntimeError as e:
             flag = 1
 
