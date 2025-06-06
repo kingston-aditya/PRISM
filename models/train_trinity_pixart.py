@@ -858,12 +858,18 @@ def main(args):
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
 
     if args.resume_from_checkpoint == "latest":
-        path_name = sorted(glob.glob(os.path.join(args.output_dir, "pixart-checkpoint-*")), key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
-        accelerator.print(f"Resuming from checkpoint {path_name}")
-        accelerator.load_state(os.path.join(args.output_dir, path_name))
-        global_step = int(path_name.split("-")[-1])
-        initial_global_step = global_step
-        first_epoch = global_step // num_update_steps_per_epoch
+        all_pths = glob.glob(os.path.join(args.output_dir, "pixart-checkpoint-*"))
+        path_name = sorted(all_pths, key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
+        if len(all_pths) != 0:
+            accelerator.print(f"Resuming from checkpoint {path_name}")
+            accelerator.load_state(os.path.join(args.output_dir, path_name))
+            global_step = int(path_name.split("-")[-1])
+            initial_global_step = global_step
+            first_epoch = global_step // num_update_steps_per_epoch
+        else:
+            initial_global_step = 0
+            first_epoch = 0
+            global_step = 0
     else:
         initial_global_step = 0
         first_epoch = 0

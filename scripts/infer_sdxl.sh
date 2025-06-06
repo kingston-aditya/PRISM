@@ -1,0 +1,24 @@
+accelerate launch --multi_gpu /nfshomes/asarkar6/aditya/PRISM/models/infer_trinity_sdxl_lora.py \
+  --pretrained_model_name_or_path="stabilityai/stable-diffusion-xl-base-1.0" \
+  --pretrained_vae_model_name_or_path="madebyollin/sdxl-vae-fp16-fix" \
+  --dataset_name="/nfshomes/asarkar6/trinity/train_data/" \
+  --output_dir="/nfshomes/asarkar6/scratch/test_image/" \
+  --cache_dir="/nfshomes/asarkar6/trinity/model_weights/" \
+  --bg_dir="/nfshomes/asarkar6/aditya/PRISM/backgrounds/" \
+  --backup="/nfshomes/asarkar6/aditya/PRISM/backup/" \
+  --resume_from_checkpoint="latest" \
+  --wanna_bg=1 \
+  --caption_column="prompt" \
+  --object_column="object" \
+  --mask_typ="causal" \
+  --blocks=4 \
+  --mixed_precision="fp16" \
+  --train_batch_size=2 \
+  --snr_gamma=5.0 \
+  --resolution=1024 \
+  --lr_scheduler="constant" \
+  --lr_warmup_steps=0 \
+  --use_8bit_adam \
+  --num_train_epochs=40 \
+  --checkpointing_steps=100 \
+  --rank=16

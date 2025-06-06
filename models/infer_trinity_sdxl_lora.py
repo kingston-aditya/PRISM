@@ -50,7 +50,6 @@ fixn_args = get_config()
 
 import sys
 sys.path.insert(1, fixn_args["repo_path"])
-
 import diffusers
 from diffusers import (
     AutoencoderKL,
@@ -75,10 +74,8 @@ import pdb as pdb_original
 import glob, json
 
 from pipeline1 import EncoderModel, ProjectLayer
-from trinity_dataloader import SDXLTrainDataset
+from trinity_dataloader import SDXLInferDataset
 
-if is_wandb_available():
-    import wandb
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 # check_min_version("0.34.0.dev0")
@@ -485,8 +482,9 @@ def import_model_class_from_model_name_or_path(pretrained_model_name_or_path: st
         return CLIPTextModelWithProjection
     else:
         raise ValueError(f"{model_class} is not supported.")
-    
-def read_Trinity_dataset():
+
+# TODO - read a batch of image-text pairs  
+def read_eval_dataset():
     # read multiple files
     json_obj = {"image":[], "prompt":[], "object":[]}
 
@@ -665,6 +663,14 @@ def main(args):
         if args.output_dir is not None:
             os.makedirs(args.output_dir, exist_ok=True)
 
+    def load_model_hook(models, input_dir):
+        models.clear()
+
+        # load trinity and projection layer
+        trinity.load_state_dict(torch.load(os.path.join(input_dir, "trinity_checkpoint"+".pt"), weights_only=True))
+        proj_layer.load_state_dict(torch.load(os.path.join(input_dir, "proj_checkpoint"+".pt"), weights_only=True))
+    accelerator.register_load_state_pre_hook(load_model_hook)
+
     # Load the tokenizers
     tokenizer_one = AutoTokenizer.from_pretrained(
         args.pretrained_model_name_or_path,
@@ -707,15 +713,11 @@ def main(args):
         variant=args.variant,
         cache_dir=args.cache_dir
     )
-    unet = UNet2DConditionModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision, variant=args.variant, cache_dir=args.cache_dir
-    )
 
     # We only train the additional adapter LoRA layers
     vae.requires_grad_(False)
     text_encoder_one.requires_grad_(False)
     text_encoder_two.requires_grad_(False)
-    unet.requires_grad_(False)
 
     # For mixed precision training we cast all non-trainable weights (vae, non-lora text_encoder and non-lora unet) to half-precision
     # as these weights are only used for inference, keeping weights in full precision is not required.
@@ -727,128 +729,17 @@ def main(args):
 
     # Move unet, vae and text_encoder to device and cast to weight_dtype
     # The VAE is in float32 to avoid NaN losses.
-    unet.to(accelerator.device, dtype=weight_dtype)
-
     if args.pretrained_vae_model_name_or_path is None:
         vae.to(accelerator.device, dtype=torch.float32)
     else:
         vae.to(accelerator.device, dtype=weight_dtype)
     text_encoder_one.to(accelerator.device, dtype=weight_dtype)
     text_encoder_two.to(accelerator.device, dtype=weight_dtype)
-
-    # now we will add new LoRA weights to the attention layers
-    # Set correct lora layers
-    unet_lora_config = LoraConfig(
-        r=args.rank,
-        lora_alpha=args.rank,
-        init_lora_weights="gaussian",
-        target_modules=["to_k", "to_q", "to_v", "to_out.0"],
-    )
-
-    unet.add_adapter(unet_lora_config)
-
-    def unwrap_model(model):
-        model = accelerator.unwrap_model(model)
-        model = model._orig_mod if is_compiled_module(model) else model
-        return model
-
-    # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
-    def save_model_hook(models, weights, output_dir):
-        if accelerator.is_main_process:
-            # there are only two options here. Either are just the unet attn processor layers
-            # or there are the unet and text encoder attn layers
-            unet_lora_layers_to_save = None
-
-            for model in models:
-                if isinstance(unwrap_model(model), type(unwrap_model(unet))):
-                    unet_lora_layers_to_save = convert_state_dict_to_diffusers(get_peft_model_state_dict(model))
-                else:
-                    pass
-            
-            # save the rem 2 models
-            torch.save(proj_layer.state_dict(), os.path.join(output_dir, "proj_checkpoint"+".pt"))
-            torch.save(trinity.state_dict(), os.path.join(output_dir, "trinity_checkpoint"+".pt"))
-
-            for _, model in enumerate(models):
-                if weights:
-                    weights.pop()
-
-            StableDiffusionXLPipeline.save_lora_weights(output_dir, unet_lora_layers=unet_lora_layers_to_save)
-
-    def load_model_hook(models, input_dir):
-        unet_ = None
-
-        while len(models) > 0:
-            model = models.pop()
-
-            if isinstance(model, type(unwrap_model(unet))):
-                unet_ = model
-            else:
-                # no need to load the trinity adapters
-                pass
-
-        lora_state_dict, _ = StableDiffusionLoraLoaderMixin.lora_state_dict(input_dir)
-        unet_state_dict = {f"{k.replace('unet.', '')}": v for k, v in lora_state_dict.items() if k.startswith("unet.")}
-        unet_state_dict = convert_unet_state_dict_to_peft(unet_state_dict)
-        incompatible_keys = set_peft_model_state_dict(unet_, unet_state_dict, adapter_name="default")
-        
-        if incompatible_keys is not None:
-            # check only for unexpected keys
-            unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
-            if unexpected_keys:
-                logger.warning(
-                    f"Loading adapter weights from state_dict led to unexpected keys not found in the model: "
-                    f" {unexpected_keys}. "
-                )
-        
-        # load trinity and projection layer
-        trinity.load_state_dict(torch.load(os.path.join(input_dir, "trinity_checkpoint"+".pt"), weights_only=True))
-        proj_layer.load_state_dict(torch.load(os.path.join(input_dir, "proj_checkpoint"+".pt"), weights_only=True))
-
-        # Make sure the trainable params are in float32. This is again needed since the base models
-        # are in `weight_dtype`. More details:
-        # https://github.com/huggingface/diffusers/pull/6514#discussion_r1449796804
-        if args.mixed_precision == "fp16":
-            models = [unet_, trinity, proj_layer]
-            cast_training_params(models, dtype=torch.float32)
-
-    accelerator.register_save_state_pre_hook(save_model_hook)
-    accelerator.register_load_state_pre_hook(load_model_hook)
-
-    if args.gradient_checkpointing:
-        unet.enable_gradient_checkpointing()
-        # we can do trinity checkpointing
         
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
     if args.allow_tf32:
         torch.backends.cuda.matmul.allow_tf32 = True
-
-    if args.scale_lr:
-        args.learning_rate = (
-            args.learning_rate * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
-        )
-
-    # Make sure the trainable params are in float32.
-    if args.mixed_precision == "fp16":
-        models = [unet]
-        cast_training_params(models, dtype=torch.float32)
-
-    # Use 8-bit Adam for lower memory usage or to fine-tune the model in 16GB GPUs
-    if args.use_8bit_adam:
-        try:
-            import bitsandbytes as bnb
-        except ImportError:
-            raise ImportError(
-                "To use 8-bit Adam, please install the bitsandbytes library: `pip install bitsandbytes`."
-            )
-
-        optimizer_class = bnb.optim.AdamW8bit
-    else:
-        optimizer_class = torch.optim.AdamW
-
-    # Optimizer creation
-    lora_layers = filter(lambda p: p.requires_grad, unet.parameters())
 
     # Load the CLIPImageProcessors
     img_tokenizer_one = CLIPImageProcessor.from_pretrained("openai/clip-vit-large-patch14", cache_dir=args.cache_dir)
@@ -867,28 +758,44 @@ def main(args):
     # b) get the tokenizers and encoders ready
     img_tokenizers = [img_tokenizer_one, img_tokenizer_two]
     img_encoders = [img_encoder_one, img_encoder_two]
+    
+    # load the transformer
+    trinity = EncoderModel(2048, 2048, num_blocks=args.blocks)
+    proj_layer = ProjectLayer(2048, 2688)
+
+    # load trinity to cuda
+    trinity.to(accelerator.device)
+    proj_layer.to(accelerator.device)
+
+    # Prepare everything with our `accelerator`.
+    trinity, proj_layer = accelerator.prepare(trinity, proj_layer)
+
+    # load trinity and projection layer
+    all_pths = glob.glob(os.path.join(args.output_dir, "sdxl-checkpoint-*"))
+    path_name = sorted(all_pths, key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
+    input_dir = os.path.join(args.output_dir, path_name)
+
+    accelerator.print(f"Resuming from checkpoint {path_name}")
+    accelerator.load_state(os.path.join(args.output_dir, path_name))
+    
+    trinity.eval()
+    proj_layer.eval()
 
     # load the dataset
-    json_obj = read_Trinity_dataset()
+    json_obj = read_eval_dataset()
 
     # Get the specified interpolation method from the args
-    # interpolation = getattr(transforms.InterpolationMode, args.image_interpolation_mode.upper(), None)
-
     def collate_fn(batch):
-        pixel_values = [item["pixel_values"] for item in batch]
         prompt_embeds_1 = torch.stack([item["prompt_embeds_1"] for item in batch])
         prompt_embeds_2 = torch.stack([item["prompt_embeds_2"] for item in batch])
         object_prompt_embeds = [item["object_prompt_embeds"] for item in batch]
         return {
-            "pixel_values": pixel_values,
             "prompt_embeds_1": prompt_embeds_1,
             "prompt_embeds_2": prompt_embeds_2,
             "object_prompt_embeds": object_prompt_embeds,
         } 
 
-    # DataLoaders creation.
-    bgs = Image.open(os.path.join(args.bg_dir, np.random.choice(os.listdir(args.bg_dir))))
-    precomputed_dataset = SDXLTrainDataset(json_obj, args, bgs, tokenizer_one, tokenizer_two)
+    precomputed_dataset = SDXLInferDataset(json_obj, args, tokenizer_one, tokenizer_two)
     train_dataloader = torch.utils.data.DataLoader(
         precomputed_dataset,
         shuffle=False,
@@ -897,298 +804,84 @@ def main(args):
         num_workers=args.dataloader_num_workers,
     )
 
-    # load the transformer
-    trinity = EncoderModel(2048, 2048, num_blocks=args.blocks)
-    proj_layer = ProjectLayer(2048, 2688)
-
-    params_to_optimize = list(lora_layers) + list(trinity.parameters()) + list(proj_layer.parameters())
-    optimizer = optimizer_class(
-        params_to_optimize,
-        lr=args.learning_rate,
-        betas=(args.adam_beta1, args.adam_beta2),
-        weight_decay=args.adam_weight_decay,
-        eps=args.adam_epsilon,
-    )
-
-    # Scheduler and math around the number of training steps.
-    overrode_max_train_steps = False
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
-    if args.max_train_steps is None:
-        args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
-        overrode_max_train_steps = True
-
-    lr_scheduler = get_scheduler(
-        args.lr_scheduler,
-        optimizer=optimizer,
-        num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
-        num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
-    )
-
-    # load trinity to cuda
-    trinity.to(accelerator.device)
-    proj_layer.to(accelerator.device)
-
-    # Prepare everything with our `accelerator`.
-    unet, optimizer, train_dataloader, lr_scheduler, trinity, proj_layer = accelerator.prepare(unet, optimizer, train_dataloader, lr_scheduler, trinity, proj_layer)
-
-    # We need to recalculate our total training steps as the size of the training dataloader may have changed.
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
-    if overrode_max_train_steps:
-        args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
-
-    # Afterwards we recalculate our number of training epochs
-    args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
-
-    # We need to initialize the trackers we use, and also store our configuration.
-    # The trackers initializes automatically on the main process.
-    if accelerator.is_main_process:
-        accelerator.init_trackers("text2image-fine-tune", config=vars(args))
-
-    # Train!
-    total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
-
-    logger.info("***** Running training *****")
-    logger.info(f"  Num examples = {len(precomputed_dataset)}")
-    logger.info(f"  Num Epochs = {args.num_train_epochs}")
-    logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
-    logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
-    logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
-    logger.info(f"  Total optimization steps = {args.max_train_steps}")
-    global_step = 0
-    first_epoch = 0
-
-    if args.resume_from_checkpoint == "latest":
-        all_pths = glob.glob(os.path.join(args.output_dir, "sdxl-checkpoint-*"))
-        path_name = sorted(all_pths, key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
-        if len(all_pths) != 0:
-            accelerator.print(f"Resuming from checkpoint {path_name}")
-            accelerator.load_state(os.path.join(args.output_dir, path_name))
-            global_step = int(path_name.split("-")[-1])
-            initial_global_step = global_step
-            first_epoch = global_step // num_update_steps_per_epoch
-        else:
-            initial_global_step = 0
-            first_epoch = 0
-            global_step = 0
-    else:
-        initial_global_step = 0
-        first_epoch = 0
-        global_step = 0
-
-    progress_bar = tqdm(
-        range(0, args.max_train_steps),
-        initial=initial_global_step,
-        desc="Steps",
-        # Only show the progress bar once on each machine.
-        disable=not accelerator.is_local_main_process,
-    )
-
-    unet.train()
-    trinity.train()
-    proj_layer.train()
+    # Make sure vae.dtype is consistent with the unet.dtype
+    if args.mixed_precision == "fp16":
+        vae.to(weight_dtype)
+    pipeline = StableDiffusionXLPipeline.from_pretrained(
+            args.pretrained_model_name_or_path,
+            vae=vae,
+            revision=args.revision,
+            variant=args.variant,
+            torch_dtype=weight_dtype,
+            cache_dir=args.cache_dir
+        )
+    # load attention processors
+    pipeline.load_lora_weights(os.path.join(args.output_dir, path_name), prefix=None)
+    pipeline.to(accelerator.device)
+    pipeline.set_progress_bar_config(disable=True)
     
-    for epoch in range(first_epoch, args.num_train_epochs):
-        train_loss = 0.0
-        for step, batch in enumerate(train_dataloader):
-            with accelerator.accumulate(unet):
-                # Convert images to latent space
-                # pixel_values = batch["pixel_values"].to(dtype=weight_dtype)
-                # try:
-                #     batch = mbatch
-                # except RuntimeError as e:
-                #     print(f"Dataset error in batch {step}: {e}")
-                #     continue
-
-                batch["original_sizes"], batch["crop_top_lefts"], batch["pixel_values"] = preprocess_train(batch["pixel_values"], args)
-                batch["pixel_values"] = torch.stack(batch["pixel_values"])
-
-                prompt_embeds, pooled_prompt_embeds = encode_prompt(
+    for step, batch in enumerate(tqdm(train_dataloader, desc="Inferring")):
+        prompt_embeds, pooled_prompt_embeds = encode_prompt(
                     batch["prompt_embeds_1"],
                     batch["prompt_embeds_2"],
                     text_encoders=[text_encoder_one, text_encoder_two],
                 )
 
-                # encode object images
-                object_prompt_embeds = []
-                # print(len(batch["object_prompt_embeds"][0]))
-                for _, item in enumerate(batch["object_prompt_embeds"]):
-                    if len(item) > 0:
-                        encoded_object = encode_object(item, img_encoders, img_tokenizers)
-                        tok_sz = encoded_object.shape[-2]//len(item)
-                        if len(item) == 1:
-                            encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0), encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
-                        elif len(item) == 2:
-                            encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
-                        else:
-                            pass
-                        encoded_object = encoded_object.to(accelerator.device)
-                    else:
-                        print("Eps-pad - Corrupt Object !!! L-1011")
-                        encoded_object = torch.randn_like(torch.zeros((1,771,2688))) * 1e-3
-                        encoded_object = encoded_object.to(text_encoder_one.device)
-
-                    object_prompt_embeds.append(encoded_object)
-                object_prompt_embeds = torch.stack(object_prompt_embeds).squeeze()
-
-                # get multimodal prompts
-                txt_tok_len = prompt_embeds.shape[-2]
-                img_tok_len = object_prompt_embeds.shape[-2]
-
-                # normalize everything
-                object_prompt_embeds = object_prompt_embeds/torch.norm(object_prompt_embeds, p=2, dim=-1, keepdim=True)
-                prompt_embeds = prompt_embeds/torch.norm(prompt_embeds, p=2, dim=-1, keepdim=True)
-
-                with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
-                    object_prompt_embeds = proj_layer(object_prompt_embeds)
-                prompt_embeds = multimodal_encode_prompt(prompt_embeds, object_prompt_embeds)
-                prompt_embeds = prompt_embeds.to(accelerator.device, dtype=weight_dtype)
-
-                # normalize everything
-                prompt_embeds = prompt_embeds/torch.norm(prompt_embeds, p=2, dim=-1, keepdim=True)
-
-                # get the trinity embeds
-                # trinity_embeds = prompt_embeds
-                with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
-                    trinity_embeds = trinity(prompt_embeds, prompt_embeds, txt_tok_len, img_tok_len, typ=args.mask_typ)
-                
-                # normalize everything
-                trinity_embeds = trinity_embeds/torch.norm(trinity_embeds, p=2, dim=-1, keepdim=True)
-
-                model_input = vae.encode(batch["pixel_values"].to(accelerator.device, dtype=weight_dtype)).latent_dist.sample()
-                model_input = model_input * vae.config.scaling_factor
-                if args.pretrained_vae_model_name_or_path is None:
-                    model_input = model_input.to(weight_dtype)
-
-                # Sample noise that we'll add to the latents
-                noise = torch.randn_like(model_input)
-                if args.noise_offset:
-                    # https://www.crosslabs.org//blog/diffusion-with-offset-noise
-                    noise += args.noise_offset * torch.randn(
-                        (model_input.shape[0], model_input.shape[1], 1, 1), device=model_input.device
-                    )
-
-                bsz = model_input.shape[0]
-                # Sample a random timestep for each image
-                timesteps = torch.randint(
-                    0, noise_scheduler.config.num_train_timesteps, (bsz,), device=model_input.device
-                )
-                timesteps = timesteps.long()
-
-                # Add noise to the model input according to the noise magnitude at each timestep
-                # (this is the forward diffusion process)
-                noisy_model_input = noise_scheduler.add_noise(model_input, noise, timesteps)
-
-                # time ids
-                def compute_time_ids(original_size, crops_coords_top_left):
-                    # Adapted from pipeline.StableDiffusionXLPipeline._get_add_time_ids
-                    target_size = (args.resolution, args.resolution)
-                    add_time_ids = list(original_size + crops_coords_top_left + target_size)
-                    add_time_ids = torch.tensor([add_time_ids])
-                    add_time_ids = add_time_ids.to(accelerator.device, dtype=weight_dtype)
-                    return add_time_ids
-
-                add_time_ids = torch.cat(
-                    [compute_time_ids(s, c) for s, c in zip(batch["original_sizes"], batch["crop_top_lefts"])]
-                )
-
-                if torch.isnan(trinity_embeds).any() or torch.isnan(pooled_prompt_embeds).any():
-                    print("!!! NAN INPUTS!!!")
-                    continue
-
-                # Predict the noise residual
-                unet_added_conditions = {"time_ids": add_time_ids}
-                unet_added_conditions.update({"text_embeds": pooled_prompt_embeds})
-                model_pred = unet(
-                    noisy_model_input,
-                    timesteps,
-                    trinity_embeds,
-                    added_cond_kwargs=unet_added_conditions,
-                    return_dict=False,
-                )[0]
-
-                # Get the target for loss depending on the prediction type
-                if args.prediction_type is not None:
-                    # set prediction_type of scheduler if defined
-                    noise_scheduler.register_to_config(prediction_type=args.prediction_type)
-
-                if noise_scheduler.config.prediction_type == "epsilon":
-                    target = noise
-                elif noise_scheduler.config.prediction_type == "v_prediction":
-                    target = noise_scheduler.get_velocity(model_input, noise, timesteps)
+        # encode object images
+        object_prompt_embeds = []
+        # print(len(batch["object_prompt_embeds"][0]))
+        for _, item in enumerate(batch["object_prompt_embeds"]):
+            if len(item) > 0:
+                encoded_object = encode_object(item, img_encoders, img_tokenizers)
+                tok_sz = encoded_object.shape[-2]//len(item)
+                if len(item) == 1:
+                    encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0), encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
+                elif len(item) == 2:
+                    encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
                 else:
-                    raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
+                    pass
+                encoded_object = encoded_object.to(accelerator.device)
+            else:
+                print("Eps-pad - Corrupt Object !!! L-1011")
+                encoded_object = torch.randn_like(torch.zeros((1,771,2688))) * 1e-3
+                encoded_object = encoded_object.to(text_encoder_one.device)
 
-                if args.snr_gamma is None:
-                    loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
-                else:
-                    # Compute loss-weights as per Section 3.4 of https://huggingface.co/papers/2303.09556.
-                    # Since we predict the noise instead of x_0, the original formulation is slightly changed.
-                    # This is discussed in Section 4.2 of the same paper.
-                    snr = compute_snr(noise_scheduler, timesteps)
-                    mse_loss_weights = torch.stack([snr, args.snr_gamma * torch.ones_like(timesteps)], dim=1).min(
-                        dim=1
-                    )[0]
-                    if noise_scheduler.config.prediction_type == "epsilon":
-                        mse_loss_weights = mse_loss_weights / snr
-                    elif noise_scheduler.config.prediction_type == "v_prediction":
-                        mse_loss_weights = mse_loss_weights / (snr + 1)
+            object_prompt_embeds.append(encoded_object)
+        object_prompt_embeds = torch.stack(object_prompt_embeds).squeeze()
 
-                    loss = F.mse_loss(model_pred.float(), target.float(), reduction="none")
-                    loss = loss.mean(dim=list(range(1, len(loss.shape)))) * mse_loss_weights
-                    loss = loss.mean()
-                if args.debug_loss and "filenames" in batch:
-                    for fname in batch["filenames"]:
-                        accelerator.log({"loss_for_" + fname: loss}, step=global_step)
-                # Gather the losses across all processes for logging (if we use distributed training).
-                avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
-                train_loss += avg_loss.item() / args.gradient_accumulation_steps
+        # get multimodal prompts
+        txt_tok_len = prompt_embeds.shape[-2]
+        img_tok_len = object_prompt_embeds.shape[-2]
 
-                # Backpropagate
-                accelerator.backward(loss)
-                if accelerator.sync_gradients:
-                    accelerator.clip_grad_norm_(params_to_optimize, args.max_grad_norm)
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad()
+        # normalize everything
+        object_prompt_embeds = object_prompt_embeds/torch.norm(object_prompt_embeds, p=2, dim=-1, keepdim=True)
+        prompt_embeds = prompt_embeds/torch.norm(prompt_embeds, p=2, dim=-1, keepdim=True)
 
-            # Checks if the accelerator has performed an optimization step behind the scenes
-            if accelerator.sync_gradients:
-                progress_bar.update(1)
-                global_step += 1
-                accelerator.log({"train_loss": train_loss}, step=global_step)
-                train_loss = 0.0
+        with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
+            object_prompt_embeds = proj_layer(object_prompt_embeds)
+        prompt_embeds = multimodal_encode_prompt(prompt_embeds, object_prompt_embeds)
+        prompt_embeds = prompt_embeds.to(accelerator.device, dtype=weight_dtype)
 
-                # DeepSpeed requires saving weights on every device; saving weights only on the main process would cause issues.
-                if accelerator.distributed_type == DistributedType.DEEPSPEED or accelerator.is_main_process:
-                    if global_step % args.checkpointing_steps == 0:
-                        save_path = os.path.join(args.output_dir, f"sdxl-checkpoint-{global_step}")
-                        accelerator.save_state(save_path)
+        # normalize everything
+        prompt_embeds = prompt_embeds/torch.norm(prompt_embeds, p=2, dim=-1, keepdim=True)
 
-                        # Save the lora layers
-                        # unet_lora_state_dict = get_peft_model_state_dict(unet)
+        # get the trinity embeds
+        # trinity_embeds = prompt_embeds
+        with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
+            trinity_embeds = trinity(prompt_embeds, prompt_embeds, txt_tok_len, img_tok_len, typ=args.mask_typ)
+        
+        # normalize everything
+        trinity_embeds = trinity_embeds/torch.norm(trinity_embeds, p=2, dim=-1, keepdim=True)
 
-                        # unet = unwrap_model(unet)
-                        # target_dtype = unet.dtype
-                        # for k, v in unet_lora_state_dict.items():
-                        #     unet_lora_state_dict[k] = v.to(target_dtype)
-                        
-                        # StableDiffusionXLPipeline.save_lora_weights(
-                        #     save_directory=args.output_dir,
-                        #     unet_lora_layers=unet_lora_state_dict
-                        # )
-
-                        logger.info(f"Saved state to {save_path}")
-
-            logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
-            progress_bar.set_postfix(**logs)
-
-            if global_step >= args.max_train_steps:
-                break
+        # load the original SDXL model
+        images = pipeline(prompt_embeds=trinity_embeds, pooled_prompt_embeds=pooled_prompt_embeds).images
 
     # accelerator.wait_for_everyone()
     accelerator.end_training()
-
+    return images
 
 if __name__ == "__main__":
     args = parse_args()
-    main(args)
+    images = main(args)
+    # for idx, image in enumerate(images):
+    #     image.save(os.path.join("/nfshomes/asarkar6/aditya/", "sample_"+str(idx)+".png"))

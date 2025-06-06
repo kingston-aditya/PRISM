@@ -149,6 +149,73 @@ class SDXLTrainDataset(Dataset):
     def __len__(self):
         return len(self.temp["prompt"])
     
+class SDXLInferDataset(Dataset):
+    def __init__(self, temp, args, txt_tokenizer1, txt_tokenizer2):
+        # load dataset
+        self.temp = temp
+        self.args = args
+        self.txt_tokenizer1 = txt_tokenizer1
+        self.txt_tokenizer2 = txt_tokenizer2
+    
+    def __getitem__(self, idx):
+        # get the pixel values
+        flag = 0
+        try:
+            img_mat = Image.open(os.path.join(self.args.dataset_name, self.temp["image"][idx])).convert("RGB")
+        except Exception as e:
+            flag = 1
+        
+        # get the image objects
+        bbox_values = []
+        bbox_info = self.temp["object"][idx]
+        if len(bbox_info) > 0 and flag==0:
+            # get the main image
+            pixel_values = img_mat
+
+            # get the prompt tokens
+            with torch.no_grad():
+                prompt_toks_1 = self.txt_tokenizer1(self.temp["prompt"][idx], padding="max_length", max_length=self.txt_tokenizer1.model_max_length, truncation=True, return_tensors="pt")
+                prompt_toks_2 = self.txt_tokenizer1(self.temp["prompt"][idx], padding="max_length", max_length=self.txt_tokenizer2.model_max_length, truncation=True, return_tensors="pt")
+                prompt_toks_1 = prompt_toks_1.input_ids
+                prompt_toks_2 = prompt_toks_2.input_ids
+
+            # process the bbox
+            for idx, item in enumerate(bbox_info):
+                x_min = int(item["xmin"])
+                x_max = min(int(item["xmax"]), 1024)
+                y_min = int(item["ymin"])
+                y_max = min(int(item["ymax"]), 1024)
+
+                if (x_max-x_min)*(y_max-y_min)>0 and y_max>=y_min and x_max>=x_min:
+                    obj_img = np.asarray(img_mat)[y_min:y_max, x_min:x_max]
+                    temp_img = obj_img
+                    bbox_values.append(Image.fromarray(temp_img))
+
+        elif len(bbox_info) == 0 or flag==1:
+            pixel_values = Image.open(os.path.join(self.args.backup, "temp_img.jpg")).convert("RGB")
+            # get the prompt tokens
+            with torch.no_grad():
+                prompt_toks_1 = self.txt_tokenizer1("A smiling woman with a pink umbrella stands in front of a \"WELCOME TO THE LAKE\" sign, with a serene lake and green trees in the background.", padding="max_length", max_length=self.txt_tokenizer1.model_max_length, truncation=True, return_tensors="pt")
+                prompt_toks_2 = self.txt_tokenizer1("A smiling woman with a pink umbrella stands in front of a \"WELCOME TO THE LAKE\" sign, with a serene lake and green trees in the background.", padding="max_length", max_length=self.txt_tokenizer2.model_max_length, truncation=True, return_tensors="pt")
+                prompt_toks_1 = prompt_toks_1.input_ids
+                prompt_toks_2 = prompt_toks_2.input_ids
+
+            for i in range(3):
+                obj_img = Image.open(os.path.join(self.args.backup, "temp_obj_"+str(i)+".jpg"))
+                temp_img = obj_img
+                temp_img = np.asarray(temp_img)
+                bbox_values.append(Image.fromarray(temp_img))
+            
+        return {
+            "prompt_embeds_1": prompt_toks_1,
+            "prompt_embeds_2": prompt_toks_2,
+            "object_prompt_embeds": bbox_values,
+            "pixel_values": pixel_values,
+        }
+
+    def __len__(self):
+        return len(self.temp["prompt"])
+    
 class PixartTrainDataset(Dataset):
     def __init__(self, temp, args, bg, max_length, txt_tokenizer):
         # load dataset
