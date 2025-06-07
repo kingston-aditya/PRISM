@@ -488,8 +488,8 @@ def read_eval_dataset():
     # read multiple files
     json_obj = {"image":[], "prompt":[], "object":[]}
 
-    for name in glob.glob("/nfshomes/asarkar6/trinity/train_data/*.jsonl"):
-        with open(os.path.join("/nfshomes/asarkar6/trinity/train_data/", name), "r") as f:
+    for name in glob.glob("/nfshomes/asarkar6/trinity/finale_data/*.jsonl"):
+        with open(os.path.join("/nfshomes/asarkar6/trinity/finale_data/", name), "r") as f:
             for line in f:
                 try:
                     temp = json.loads(line.strip())
@@ -663,13 +663,13 @@ def main(args):
         if args.output_dir is not None:
             os.makedirs(args.output_dir, exist_ok=True)
 
-    def load_model_hook(models, input_dir):
-        models.clear()
+    # def load_model_hook(models, input_dir):
+    #     models.clear()
 
-        # load trinity and projection layer
-        trinity.load_state_dict(torch.load(os.path.join(input_dir, "trinity_checkpoint"+".pt"), weights_only=True))
-        proj_layer.load_state_dict(torch.load(os.path.join(input_dir, "proj_checkpoint"+".pt"), weights_only=True))
-    accelerator.register_load_state_pre_hook(load_model_hook)
+    #     # load trinity and projection layer
+    #     trinity.load_state_dict(torch.load(os.path.join(input_dir, "trinity_checkpoint"+".pt"), weights_only=True))
+    #     proj_layer.load_state_dict(torch.load(os.path.join(input_dir, "proj_checkpoint"+".pt"), weights_only=True))
+    # accelerator.register_load_state_pre_hook(load_model_hook)
 
     # Load the tokenizers
     tokenizer_one = AutoTokenizer.from_pretrained(
@@ -763,6 +763,16 @@ def main(args):
     trinity = EncoderModel(2048, 2048, num_blocks=args.blocks)
     proj_layer = ProjectLayer(2048, 2688)
 
+    # load trinity and projection layer
+    all_pths = glob.glob(os.path.join(args.output_dir, "sdxl-checkpoint-*"))
+    path_name = sorted(all_pths, key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
+    input_dir = os.path.join(args.output_dir, path_name)
+    print(os.path.join(input_dir, "trinity_checkpoint"+".pt"))
+
+    # load trinity and projection layer
+    trinity.load_state_dict(torch.load(os.path.join(input_dir, "trinity_checkpoint"+".pt")))
+    proj_layer.load_state_dict(torch.load(os.path.join(input_dir, "proj_checkpoint"+".pt")))
+
     # load trinity to cuda
     trinity.to(accelerator.device)
     proj_layer.to(accelerator.device)
@@ -770,13 +780,8 @@ def main(args):
     # Prepare everything with our `accelerator`.
     trinity, proj_layer = accelerator.prepare(trinity, proj_layer)
 
-    # load trinity and projection layer
-    all_pths = glob.glob(os.path.join(args.output_dir, "sdxl-checkpoint-*"))
-    path_name = sorted(all_pths, key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
-    input_dir = os.path.join(args.output_dir, path_name)
-
-    accelerator.print(f"Resuming from checkpoint {path_name}")
-    accelerator.load_state(os.path.join(args.output_dir, path_name))
+    # accelerator.print(f"Resuming from checkpoint {path_name}")
+    # accelerator.load_state(os.path.join(args.output_dir, path_name))
     
     trinity.eval()
     proj_layer.eval()
@@ -816,10 +821,12 @@ def main(args):
             cache_dir=args.cache_dir
         )
     # load attention processors
+    accelerator.print(path_name)
     pipeline.load_lora_weights(os.path.join(args.output_dir, path_name), prefix=None)
     pipeline.to(accelerator.device)
     pipeline.set_progress_bar_config(disable=True)
     
+    k = 0
     for step, batch in enumerate(tqdm(train_dataloader, desc="Inferring")):
         prompt_embeds, pooled_prompt_embeds = encode_prompt(
                     batch["prompt_embeds_1"],
@@ -874,14 +881,16 @@ def main(args):
         trinity_embeds = trinity_embeds/torch.norm(trinity_embeds, p=2, dim=-1, keepdim=True)
 
         # load the original SDXL model
-        images = pipeline(prompt_embeds=trinity_embeds, pooled_prompt_embeds=pooled_prompt_embeds).images
+        images = pipeline(prompt_embeds=trinity_embeds, pooled_prompt_embeds=pooled_prompt_embeds, num_inference_steps=50).images
+
+        for idx, image in enumerate(images):
+            image.save(os.path.join("/nfshomes/asarkar6/aditya/gen_images/", "sample_"+str(k)+".png"))
+            k+=1
 
     # accelerator.wait_for_everyone()
     accelerator.end_training()
-    return images
 
 if __name__ == "__main__":
     args = parse_args()
-    images = main(args)
-    # for idx, image in enumerate(images):
-    #     image.save(os.path.join("/nfshomes/asarkar6/aditya/", "sample_"+str(idx)+".png"))
+    main(args)
+    

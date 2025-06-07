@@ -766,8 +766,10 @@ def main(args):
                     pass
             
             # save the rem 2 models
-            torch.save(proj_layer.state_dict(), os.path.join(output_dir, "proj_checkpoint"+".pt"))
-            torch.save(trinity.state_dict(), os.path.join(output_dir, "trinity_checkpoint"+".pt"))
+            proj_layer_clean = unwrap_model(proj_layer)
+            trinity_clean = unwrap_model(trinity)
+            torch.save(proj_layer_clean.state_dict(), os.path.join(output_dir, "proj_checkpoint"+".pt"))
+            torch.save(trinity_clean.state_dict(), os.path.join(output_dir, "trinity_checkpoint"+".pt"))
 
             for _, model in enumerate(models):
                 if weights:
@@ -790,27 +792,24 @@ def main(args):
         lora_state_dict, _ = StableDiffusionLoraLoaderMixin.lora_state_dict(input_dir)
         unet_state_dict = {f"{k.replace('unet.', '')}": v for k, v in lora_state_dict.items() if k.startswith("unet.")}
         unet_state_dict = convert_unet_state_dict_to_peft(unet_state_dict)
-        incompatible_keys = set_peft_model_state_dict(unet_, unet_state_dict, adapter_name="default")
         
-        if incompatible_keys is not None:
-            # check only for unexpected keys
-            unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
-            if unexpected_keys:
-                logger.warning(
-                    f"Loading adapter weights from state_dict led to unexpected keys not found in the model: "
-                    f" {unexpected_keys}. "
-                )
+        # incompatible_keys = set_peft_model_state_dict(unet_, unet_state_dict, adapter_name="default")
         
-        # load trinity and projection layer
-        trinity.load_state_dict(torch.load(os.path.join(input_dir, "trinity_checkpoint"+".pt"), weights_only=True))
-        proj_layer.load_state_dict(torch.load(os.path.join(input_dir, "proj_checkpoint"+".pt"), weights_only=True))
+        # if incompatible_keys is not None:
+        #     # check only for unexpected keys
+        #     unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
+        #     if unexpected_keys:
+        #         logger.warning(
+        #             f"Loading adapter weights from state_dict led to unexpected keys not found in the model: "
+        #             f" {unexpected_keys}. "
+        #         )
 
         # Make sure the trainable params are in float32. This is again needed since the base models
         # are in `weight_dtype`. More details:
         # https://github.com/huggingface/diffusers/pull/6514#discussion_r1449796804
-        if args.mixed_precision == "fp16":
-            models = [unet_, trinity, proj_layer]
-            cast_training_params(models, dtype=torch.float32)
+        # if args.mixed_precision == "fp16":
+        #     models = [unet_]
+        #     cast_training_params(models, dtype=torch.float32)
 
     accelerator.register_save_state_pre_hook(save_model_hook)
     accelerator.register_load_state_pre_hook(load_model_hook)
@@ -901,6 +900,33 @@ def main(args):
     trinity = EncoderModel(2048, 2048, num_blocks=args.blocks)
     proj_layer = ProjectLayer(2048, 2688)
 
+    # load the weights
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+    if args.resume_from_checkpoint == "latest":
+        all_pths = glob.glob(os.path.join(args.output_dir, "sdxl-checkpoint-*"))
+        if len(all_pths) != 0:
+            path_name = sorted(all_pths, key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
+            accelerator.print(f"Resuming from checkpoint {path_name}")
+            input_dir = os.path.join(args.output_dir, path_name)
+            # load the unet
+            accelerator.load_state(input_dir)
+
+            # load trinity and projection layer
+            trinity.load_state_dict(torch.load(os.path.join(input_dir, "trinity_checkpoint"+".pt")))
+            proj_layer.load_state_dict(torch.load(os.path.join(input_dir, "proj_checkpoint"+".pt")))
+
+            global_step = int(path_name.split("-")[-1])
+            initial_global_step = global_step
+            first_epoch = global_step // num_update_steps_per_epoch
+        else:
+            initial_global_step = 0
+            first_epoch = 0
+            global_step = 0
+    else:
+        initial_global_step = 0
+        first_epoch = 0
+        global_step = 0
+
     params_to_optimize = list(lora_layers) + list(trinity.parameters()) + list(proj_layer.parameters())
     optimizer = optimizer_class(
         params_to_optimize,
@@ -912,7 +938,6 @@ def main(args):
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     if args.max_train_steps is None:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
@@ -956,24 +981,6 @@ def main(args):
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
     global_step = 0
     first_epoch = 0
-
-    if args.resume_from_checkpoint == "latest":
-        all_pths = glob.glob(os.path.join(args.output_dir, "sdxl-checkpoint-*"))
-        path_name = sorted(all_pths, key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
-        if len(all_pths) != 0:
-            accelerator.print(f"Resuming from checkpoint {path_name}")
-            accelerator.load_state(os.path.join(args.output_dir, path_name))
-            global_step = int(path_name.split("-")[-1])
-            initial_global_step = global_step
-            first_epoch = global_step // num_update_steps_per_epoch
-        else:
-            initial_global_step = 0
-            first_epoch = 0
-            global_step = 0
-    else:
-        initial_global_step = 0
-        first_epoch = 0
-        global_step = 0
 
     progress_bar = tqdm(
         range(0, args.max_train_steps),
