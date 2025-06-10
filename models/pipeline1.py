@@ -40,6 +40,8 @@ def get_mask(txt_tok, img_tok, typ, alignm=None):
         full_mask[img_tok:img_tok+txt_tok, img_tok:img_tok+txt_tok] = mask_txt_txt
         full_mask[img_tok:img_tok+txt_tok, 0:img_tok] = mask_txt_img
         mask = full_mask.unsqueeze(0).unsqueeze(0)
+    elif typ=="no_mask":
+        mask = torch.ones(txt_tok+img_tok, txt_tok+img_tok).unsqueeze(0).unsqueeze(0)
     else:
         mask = None
         print("Incorrect mask")

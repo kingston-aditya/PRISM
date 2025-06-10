@@ -1,4 +1,4 @@
-accelerate launch --multi_gpu /nfshomes/asarkar6/aditya/PRISM/models/train_trinity_sdxl_lora.py \
+accelerate launch --multi_gpu --main_process_port 29501 /nfshomes/asarkar6/aditya/PRISM/models/train_trinity_sdxl_lora.py \
   --pretrained_model_name_or_path="stabilityai/stable-diffusion-xl-base-1.0" \
   --pretrained_vae_model_name_or_path="madebyollin/sdxl-vae-fp16-fix" \
   --dataset_name="/nfshomes/asarkar6/trinity/train_data/" \
@@ -10,7 +10,7 @@ accelerate launch --multi_gpu /nfshomes/asarkar6/aditya/PRISM/models/train_trini
   --wanna_bg=1 \
   --caption_column="prompt" \
   --object_column="object" \
-  --mask_typ="causal" \
+  --mask_typ="no_mask" \
   --blocks=4 \
   --mixed_precision="fp16" \
   --train_batch_size=2 \

@@ -24,6 +24,7 @@ import shutil
 from contextlib import nullcontext
 from pathlib import Path
 from PIL import Image
+from itertools import product
 
 import datasets
 import numpy as np
@@ -68,13 +69,12 @@ from diffusers.utils import (
 )
 from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
 from diffusers.utils.import_utils import is_torch_npu_available, is_xformers_available
-from diffusers.utils.torch_utils import is_compiled_module
 
 import pdb as pdb_original
 import glob, json
 
 from pipeline1 import EncoderModel, ProjectLayer
-from trinity_dataloader import SDXLInferDataset
+from trinity_dataloader import SDXLInferDataset, SDXLTrainDataset
 
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
@@ -279,7 +279,7 @@ def parse_args(input_args=None):
         help="Whether to train the text encoder. If set, the text encoder should be float32 precision.",
     )
     parser.add_argument(
-        "--train_batch_size", type=int, default=16, help="Batch size (per device) for the training dataloader."
+        "--train_batch_size", type=int, default=1, help="Batch size (per device) for the training dataloader."
     )
     parser.add_argument("--num_train_epochs", type=int, default=100)
     parser.add_argument(
@@ -349,9 +349,9 @@ def parse_args(input_args=None):
         "--lr_warmup_steps", type=int, default=500, help="Number of steps for the warmup in the lr scheduler."
     )
     parser.add_argument(
-        "--snr_gamma",
-        type=float,
-        default=None,
+        "--num_images_pp",
+        type=int,
+        default=10,
         help="SNR weighting gamma to be used if rebalancing the loss. Recommended value is 5.0. "
         "More details here: https://huggingface.co/papers/2303.09556.",
     )
@@ -488,8 +488,8 @@ def read_eval_dataset():
     # read multiple files
     json_obj = {"image":[], "prompt":[], "object":[]}
 
-    for name in glob.glob("/nfshomes/asarkar6/trinity/finale_data/*.jsonl"):
-        with open(os.path.join("/nfshomes/asarkar6/trinity/finale_data/", name), "r") as f:
+    for name in glob.glob("/nfshomes/asarkar6/aditya/PRISM/validation/*.jsonl"):
+        with open(os.path.join("/nfshomes/asarkar6/aditya/PRISM/validation/", name), "r") as f:
             for line in f:
                 try:
                     temp = json.loads(line.strip())
@@ -826,7 +826,6 @@ def main(args):
     pipeline.to(accelerator.device)
     pipeline.set_progress_bar_config(disable=True)
     
-    k = 0
     for step, batch in enumerate(tqdm(train_dataloader, desc="Inferring")):
         prompt_embeds, pooled_prompt_embeds = encode_prompt(
                     batch["prompt_embeds_1"],
@@ -836,7 +835,6 @@ def main(args):
 
         # encode object images
         object_prompt_embeds = []
-        # print(len(batch["object_prompt_embeds"][0]))
         for _, item in enumerate(batch["object_prompt_embeds"]):
             if len(item) > 0:
                 encoded_object = encode_object(item, img_encoders, img_tokenizers)
@@ -863,7 +861,6 @@ def main(args):
         # normalize everything
         object_prompt_embeds = object_prompt_embeds/torch.norm(object_prompt_embeds, p=2, dim=-1, keepdim=True)
         prompt_embeds = prompt_embeds/torch.norm(prompt_embeds, p=2, dim=-1, keepdim=True)
-
         with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
             object_prompt_embeds = proj_layer(object_prompt_embeds)
         prompt_embeds = multimodal_encode_prompt(prompt_embeds, object_prompt_embeds)
@@ -881,11 +878,12 @@ def main(args):
         trinity_embeds = trinity_embeds/torch.norm(trinity_embeds, p=2, dim=-1, keepdim=True)
 
         # load the original SDXL model
-        images = pipeline(prompt_embeds=trinity_embeds, pooled_prompt_embeds=pooled_prompt_embeds, num_inference_steps=50).images
+        images = pipeline(prompt_embeds=trinity_embeds, pooled_prompt_embeds=pooled_prompt_embeds, num_inference_steps=50, num_images_per_prompt=args.num_images_pp).images
 
-        for idx, image in enumerate(images):
-            image.save(os.path.join("/nfshomes/asarkar6/aditya/gen_images/", "sample_"+str(k)+".png"))
-            k+=1
+        for p_idx, i_idx in product(range(prompt_embeds.shape[0]), range(args.num_images_pp)):
+            idx = p_idx * args.num_images_pp + i_idx
+            pdx = step * prompt_embeds.shape[0] + p_idx
+            images[idx].save(os.path.join(args.backup, f"prompt{pdx}_img{i_idx}.png"))
 
     # accelerator.wait_for_everyone()
     accelerator.end_training()

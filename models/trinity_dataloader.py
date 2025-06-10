@@ -182,13 +182,12 @@ class SDXLInferDataset(Dataset):
             # process the bbox
             for idx, item in enumerate(bbox_info):
                 x_min = int(item["xmin"])
-                x_max = min(int(item["xmax"]), 1024)
+                x_max = int(item["xmax"])
                 y_min = int(item["ymin"])
-                y_max = min(int(item["ymax"]), 1024)
+                y_max = int(item["ymax"])
 
                 if (x_max-x_min)*(y_max-y_min)>0 and y_max>=y_min and x_max>=x_min:
-                    obj_img = np.asarray(img_mat)[y_min:y_max, x_min:x_max]
-                    temp_img = obj_img
+                    temp_img = np.asarray(img_mat)[y_min:y_max, x_min:x_max]
                     bbox_values.append(Image.fromarray(temp_img))
 
         elif len(bbox_info) == 0 or flag==1:
@@ -201,8 +200,7 @@ class SDXLInferDataset(Dataset):
                 prompt_toks_2 = prompt_toks_2.input_ids
 
             for i in range(3):
-                obj_img = Image.open(os.path.join(self.args.backup, "temp_obj_"+str(i)+".jpg"))
-                temp_img = obj_img
+                temp_img = Image.open(os.path.join(self.args.backup, "temp_obj_"+str(i)+".jpg"))
                 temp_img = np.asarray(temp_img)
                 bbox_values.append(Image.fromarray(temp_img))
             

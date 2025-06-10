@@ -997,18 +997,12 @@ def main(args):
     for epoch in range(first_epoch, args.num_train_epochs):
         train_loss = 0.0
         for step, batch in enumerate(train_dataloader):
-            with accelerator.accumulate(unet):
+            with accelerator.accumulate(unet), accelerator.accumulate(trinity), accelerator.accumulate(proj_layer):
                 # Convert images to latent space
-                # pixel_values = batch["pixel_values"].to(dtype=weight_dtype)
-                # try:
-                #     batch = mbatch
-                # except RuntimeError as e:
-                #     print(f"Dataset error in batch {step}: {e}")
-                #     continue
-
                 batch["original_sizes"], batch["crop_top_lefts"], batch["pixel_values"] = preprocess_train(batch["pixel_values"], args)
                 batch["pixel_values"] = torch.stack(batch["pixel_values"])
 
+                # get the prompt embeddings
                 prompt_embeds, pooled_prompt_embeds = encode_prompt(
                     batch["prompt_embeds_1"],
                     batch["prompt_embeds_2"],
@@ -1170,20 +1164,6 @@ def main(args):
                     if global_step % args.checkpointing_steps == 0:
                         save_path = os.path.join(args.output_dir, f"sdxl-checkpoint-{global_step}")
                         accelerator.save_state(save_path)
-
-                        # Save the lora layers
-                        # unet_lora_state_dict = get_peft_model_state_dict(unet)
-
-                        # unet = unwrap_model(unet)
-                        # target_dtype = unet.dtype
-                        # for k, v in unet_lora_state_dict.items():
-                        #     unet_lora_state_dict[k] = v.to(target_dtype)
-                        
-                        # StableDiffusionXLPipeline.save_lora_weights(
-                        #     save_directory=args.output_dir,
-                        #     unet_lora_layers=unet_lora_state_dict
-                        # )
-
                         logger.info(f"Saved state to {save_path}")
 
             logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
