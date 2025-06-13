@@ -493,8 +493,6 @@ def read_eval_dataset():
             for line in f:
                 try:
                     temp = json.loads(line.strip())
-                    # saves the image
-                    json_obj["image"].append(temp["file_name"])
                     # saves the text prompt
                     json_obj["prompt"].append(temp["prompt"])
                     # saves the object
@@ -513,7 +511,6 @@ def encode_object(batch, img_encoders, img_tokenizers):
 
     # create the image embeddings
     with torch.no_grad():
-        idx = 0
         for img_tokenizer, img_encoder in zip(img_tokenizers, img_encoders):
             try:
                 img_inputs = img_tokenizer(
@@ -527,15 +524,9 @@ def encode_object(batch, img_encoders, img_tokenizers):
                 bs_embed, seq_len, _ = img_embeds.shape
                 img_embeds = img_embeds.view(bs_embed, seq_len, -1)
             except Exception as e:
-                if idx == 0:
-                    img_embeds = torch.randn_like(torch.zeros([len(batch), 257, 1024])) * 1e-3
-                else:
-                    img_embeds = torch.randn_like(torch.zeros([len(batch), 257, 1664])) * 1e-3
-                bs_embed, seq_len, _ = img_embeds.shape
-                img_embeds = img_embeds.view(bs_embed, seq_len, -1)
+                print("Unable to read this !!!")
 
             # We are only ALWAYS interested in the pooled output of the final text encoder
-            idx+=1
             object_embeds_list.append(img_embeds)
 
     # two image encoders - 257x1024 + 257x1664 = 257x2688
@@ -812,6 +803,8 @@ def main(args):
     # Make sure vae.dtype is consistent with the unet.dtype
     if args.mixed_precision == "fp16":
         vae.to(weight_dtype)
+    
+    # load SDXL
     pipeline = StableDiffusionXLPipeline.from_pretrained(
             args.pretrained_model_name_or_path,
             vae=vae,
@@ -820,12 +813,14 @@ def main(args):
             torch_dtype=weight_dtype,
             cache_dir=args.cache_dir
         )
+    
     # load attention processors
     accelerator.print(path_name)
     pipeline.load_lora_weights(os.path.join(args.output_dir, path_name), prefix=None)
     pipeline.to(accelerator.device)
     pipeline.set_progress_bar_config(disable=True)
     
+    # training loop
     for step, batch in enumerate(tqdm(train_dataloader, desc="Inferring")):
         prompt_embeds, pooled_prompt_embeds = encode_prompt(
                     batch["prompt_embeds_1"],
@@ -835,23 +830,21 @@ def main(args):
 
         # encode object images
         object_prompt_embeds = []
-        for _, item in enumerate(batch["object_prompt_embeds"]):
-            if len(item) > 0:
-                encoded_object = encode_object(item, img_encoders, img_tokenizers)
-                tok_sz = encoded_object.shape[-2]//len(item)
-                if len(item) == 1:
-                    encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0), encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
-                elif len(item) == 2:
-                    encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
-                else:
-                    pass
-                encoded_object = encoded_object.to(accelerator.device)
-            else:
-                print("Eps-pad - Corrupt Object !!! L-1011")
-                encoded_object = torch.randn_like(torch.zeros((1,771,2688))) * 1e-3
-                encoded_object = encoded_object.to(text_encoder_one.device)
-
-            object_prompt_embeds.append(encoded_object)
+        try:
+            for _, item in enumerate(batch["object_prompt_embeds"]):
+                if len(item) > 0:
+                    encoded_object = encode_object(item, img_encoders, img_tokenizers)
+                    tok_sz = encoded_object.shape[-2]//len(item)
+                    if len(item) == 1:
+                        encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0), encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
+                    elif len(item) == 2:
+                        encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
+                    else:
+                        pass
+                    encoded_object = encoded_object.to(accelerator.device)
+                object_prompt_embeds.append(encoded_object)
+        except:
+            print("NO OBJECTS PRESENT !!!")
         object_prompt_embeds = torch.stack(object_prompt_embeds).squeeze()
 
         # get multimodal prompts

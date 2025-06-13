@@ -5,6 +5,17 @@ import torch
 import numpy as np
 import os
 
+def transform_obj(img, args):
+    # Preprocessing the datasets.
+    train_transforms = transforms.Compose(
+        [
+            transforms.Resize(args.resolution, interpolation=transforms.InterpolationMode.BILINEAR),
+            transforms.CenterCrop(args.resolution) if args.center_crop else transforms.RandomCrop(args.resolution),
+        ]
+    )
+    out_img = train_transforms(img)
+    return out_img
+
 def transform_img(img, args):
     # Preprocessing the datasets.
     train_transforms = transforms.Compose(
@@ -144,6 +155,7 @@ class SDXLTrainDataset(Dataset):
             "prompt_embeds_2": prompt_toks_2,
             "object_prompt_embeds": bbox_values,
             "pixel_values": pixel_values,
+            "filenames": os.path.join(self.args.dataset_name, self.temp["image"][idx])
         }
 
     def __len__(self):
@@ -157,21 +169,11 @@ class SDXLInferDataset(Dataset):
         self.txt_tokenizer1 = txt_tokenizer1
         self.txt_tokenizer2 = txt_tokenizer2
     
-    def __getitem__(self, idx):
-        # get the pixel values
-        flag = 0
-        try:
-            img_mat = Image.open(os.path.join(self.args.dataset_name, self.temp["image"][idx])).convert("RGB")
-        except Exception as e:
-            flag = 1
-        
+    def __getitem__(self, idx):        
         # get the image objects
         bbox_values = []
         bbox_info = self.temp["object"][idx]
-        if len(bbox_info) > 0 and flag==0:
-            # get the main image
-            pixel_values = img_mat
-
+        if len(bbox_info) > 0:
             # get the prompt tokens
             with torch.no_grad():
                 prompt_toks_1 = self.txt_tokenizer1(self.temp["prompt"][idx], padding="max_length", max_length=self.txt_tokenizer1.model_max_length, truncation=True, return_tensors="pt")
@@ -181,34 +183,17 @@ class SDXLInferDataset(Dataset):
 
             # process the bbox
             for idx, item in enumerate(bbox_info):
-                x_min = int(item["xmin"])
-                x_max = int(item["xmax"])
-                y_min = int(item["ymin"])
-                y_max = int(item["ymax"])
+                img_mat = Image.open(os.path.join(self.args.valid_path_name, item["img_pth"])).convert("RGB")
+                img_mat = transform_obj(img_mat, self.args)
+                bbox_values.append(img_mat)
 
-                if (x_max-x_min)*(y_max-y_min)>0 and y_max>=y_min and x_max>=x_min:
-                    temp_img = np.asarray(img_mat)[y_min:y_max, x_min:x_max]
-                    bbox_values.append(Image.fromarray(temp_img))
-
-        elif len(bbox_info) == 0 or flag==1:
-            pixel_values = Image.open(os.path.join(self.args.backup, "temp_img.jpg")).convert("RGB")
-            # get the prompt tokens
-            with torch.no_grad():
-                prompt_toks_1 = self.txt_tokenizer1("A smiling woman with a pink umbrella stands in front of a \"WELCOME TO THE LAKE\" sign, with a serene lake and green trees in the background.", padding="max_length", max_length=self.txt_tokenizer1.model_max_length, truncation=True, return_tensors="pt")
-                prompt_toks_2 = self.txt_tokenizer1("A smiling woman with a pink umbrella stands in front of a \"WELCOME TO THE LAKE\" sign, with a serene lake and green trees in the background.", padding="max_length", max_length=self.txt_tokenizer2.model_max_length, truncation=True, return_tensors="pt")
-                prompt_toks_1 = prompt_toks_1.input_ids
-                prompt_toks_2 = prompt_toks_2.input_ids
-
-            for i in range(3):
-                temp_img = Image.open(os.path.join(self.args.backup, "temp_obj_"+str(i)+".jpg"))
-                temp_img = np.asarray(temp_img)
-                bbox_values.append(Image.fromarray(temp_img))
+        elif len(bbox_info) == 0:
+            raise Exception("Give me an object")
             
         return {
             "prompt_embeds_1": prompt_toks_1,
             "prompt_embeds_2": prompt_toks_2,
             "object_prompt_embeds": bbox_values,
-            "pixel_values": pixel_values,
         }
 
     def __len__(self):

@@ -19,9 +19,6 @@ import argparse
 import logging
 import math
 import os
-import random
-import shutil
-from contextlib import nullcontext
 from pathlib import Path
 from PIL import Image
 
@@ -75,10 +72,9 @@ import pdb as pdb_original
 import glob, json
 
 from pipeline1 import EncoderModel, ProjectLayer
-from trinity_dataloader import SDXLTrainDataset
+from trinity_dataloader import SDXLTrainDataset, SDXLInferDataset
 
-if is_wandb_available():
-    import wandb
+
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 # check_min_version("0.34.0.dev0")
@@ -176,6 +172,14 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--image_column", type=str, default="image", help="The column of the dataset containing an image."
     )
+
+    parser.add_argument(
+        "--valid_path_name", 
+        type=str, 
+        default="/nfshomes/asarkar6/aditya/PRISM/validation/", 
+        help="Validation path name."
+    )
+
     parser.add_argument(
         "--caption_column",
         type=str,
@@ -322,11 +326,34 @@ def parse_args(input_args=None):
         default=1,
         help="Number of updates steps to accumulate before performing a backward/update pass.",
     )
+
+    parser.add_argument(
+        "--num_images_pp",
+        type=int,
+        default=9,
+        help="Number of images per prompt.",
+    )
+
     parser.add_argument(
         "--gradient_checkpointing",
         action="store_true",
         help="Whether or not to use gradient checkpointing to save memory at the expense of slower backward pass.",
     )
+
+    parser.add_argument(
+        "--valid_checkpointing",
+        type=int,
+        default=15,
+        help="Do a validation pass.",
+    )
+
+    parser.add_argument(
+        "--do_valid",
+        type=str,
+        default="False",
+        help="do you wanna do validation?",
+    )
+
     parser.add_argument(
         "--learning_rate",
         type=float,
@@ -485,7 +512,29 @@ def import_model_class_from_model_name_or_path(pretrained_model_name_or_path: st
         return CLIPTextModelWithProjection
     else:
         raise ValueError(f"{model_class} is not supported.")
-    
+
+ 
+def read_eval_dataset(path_name):
+    # read multiple files
+    json_obj = {"image":[], "prompt":[], "object":[]}
+
+    for name in glob.glob(os.path.join(path_name,"*.jsonl")):
+        with open(os.path.join(path_name, name), "r") as f:
+            for line in f:
+                try:
+                    temp = json.loads(line.strip())
+                    # saves the text prompt
+                    json_obj["prompt"].append(temp["prompt"])
+                    # saves the object
+                    if temp["object"] is not None:
+                        json_obj["object"].append(temp["object"])
+                    else:
+                        json_obj["object"].append([])
+                except json.JSONDecodeError as e:
+                    print(f"Failed to decode JSON for line: {line.strip()} with error: {e}")
+    return json_obj
+
+
 def read_Trinity_dataset():
     # read multiple files
     json_obj = {"image":[], "prompt":[], "object":[]}
@@ -508,7 +557,6 @@ def read_Trinity_dataset():
                     print(f"Failed to decode JSON for line: {line.strip()} with error: {e}")
     return json_obj
 
-
 # encode object prompt - Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
 def encode_object(batch, img_encoders, img_tokenizers):
     object_embeds_list = []
@@ -528,13 +576,8 @@ def encode_object(batch, img_encoders, img_tokenizers):
                 img_embeds = img_embeds[-1][-2]
                 bs_embed, seq_len, _ = img_embeds.shape
                 img_embeds = img_embeds.view(bs_embed, seq_len, -1)
-            except Exception as e:
-                if idx == 0:
-                    img_embeds = torch.randn_like(torch.zeros([len(batch), 257, 1024])) * 1e-3
-                else:
-                    img_embeds = torch.randn_like(torch.zeros([len(batch), 257, 1664])) * 1e-3
-                bs_embed, seq_len, _ = img_embeds.shape
-                img_embeds = img_embeds.view(bs_embed, seq_len, -1)
+            except:
+                raise Exception("padding being done at encoding objects.")
 
             # We are only ALWAYS interested in the pooled output of the final text encoder
             idx+=1
@@ -878,11 +921,13 @@ def main(args):
         prompt_embeds_1 = torch.stack([item["prompt_embeds_1"] for item in batch])
         prompt_embeds_2 = torch.stack([item["prompt_embeds_2"] for item in batch])
         object_prompt_embeds = [item["object_prompt_embeds"] for item in batch]
+        filenames = [item["filenames"] for item in batch]
         return {
             "pixel_values": pixel_values,
             "prompt_embeds_1": prompt_embeds_1,
             "prompt_embeds_2": prompt_embeds_2,
             "object_prompt_embeds": object_prompt_embeds,
+            "filenames": filenames
         } 
 
     # DataLoaders creation.
@@ -1012,23 +1057,34 @@ def main(args):
                 # encode object images
                 object_prompt_embeds = []
                 # print(len(batch["object_prompt_embeds"][0]))
+                flag = 0
                 for _, item in enumerate(batch["object_prompt_embeds"]):
                     if len(item) > 0:
-                        encoded_object = encode_object(item, img_encoders, img_tokenizers)
-                        tok_sz = encoded_object.shape[-2]//len(item)
-                        if len(item) == 1:
-                            encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0), encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
-                        elif len(item) == 2:
-                            encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
-                        else:
-                            pass
-                        encoded_object = encoded_object.to(accelerator.device)
+                        try:
+                            encoded_object = encode_object(item, img_encoders, img_tokenizers)
+                            tok_sz = encoded_object.shape[-2]//len(item)
+                            if len(item) == 1:
+                                encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0), encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
+                            elif len(item) == 2:
+                                encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
+                            else:
+                                pass
+                            encoded_object = encoded_object.to(accelerator.device)
+                        except Exception as e:
+                            print("padding being done")
+                            flag = 1
                     else:
-                        print("Eps-pad - Corrupt Object !!! L-1011")
-                        encoded_object = torch.randn_like(torch.zeros((1,771,2688))) * 1e-3
-                        encoded_object = encoded_object.to(text_encoder_one.device)
+                        print("Eps-padding - Corrupt Object !!! L-1062")
+                        encoded_object = []
+                        flag = 1
 
                     object_prompt_embeds.append(encoded_object)
+                
+                # for any case of padding, remove that batch
+                if flag == 1:
+                    print("FLAG is 1.. something wrong happened!!")
+                    continue
+
                 object_prompt_embeds = torch.stack(object_prompt_embeds).squeeze()
 
                 # get multimodal prompts
@@ -1137,9 +1193,12 @@ def main(args):
                     loss = F.mse_loss(model_pred.float(), target.float(), reduction="none")
                     loss = loss.mean(dim=list(range(1, len(loss.shape)))) * mse_loss_weights
                     loss = loss.mean()
+                
+                args.debug_loss = True
                 if args.debug_loss and "filenames" in batch:
                     for fname in batch["filenames"]:
                         accelerator.log({"loss_for_" + fname: loss}, step=global_step)
+
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
@@ -1171,7 +1230,7 @@ def main(args):
 
             if global_step >= args.max_train_steps:
                 break
-
+        
     # accelerator.wait_for_everyone()
     accelerator.end_training()
 

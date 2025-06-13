@@ -1,7 +1,7 @@
 accelerate launch --multi_gpu --main_process_port 29501 /nfshomes/asarkar6/aditya/PRISM/models/infer_trinity_sdxl_lora.py \
   --pretrained_model_name_or_path="stabilityai/stable-diffusion-xl-base-1.0" \
   --pretrained_vae_model_name_or_path="madebyollin/sdxl-vae-fp16-fix" \
-  --dataset_name="/nfshomes/asarkar6/trinity/train_data/" \
+  --dataset_name="/nfshomes/asarkar6/aditya/PRISM/validation/" \
   --output_dir="/nfshomes/asarkar6/scratch/test_image/" \
   --cache_dir="/nfshomes/asarkar6/trinity/model_weights/" \
   --bg_dir="/nfshomes/asarkar6/aditya/PRISM/backgrounds/" \
