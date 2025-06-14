@@ -6,6 +6,7 @@ accelerate launch --multi_gpu --main_process_port 29501 /nfshomes/asarkar6/adity
   --cache_dir="/nfshomes/asarkar6/trinity/model_weights/" \
   --bg_dir="/nfshomes/asarkar6/aditya/PRISM/backgrounds/" \
   --backup="/nfshomes/asarkar6/aditya/gen_images/" \
+  --valid_path_name="/nfshomes/asarkar6/aditya/PRISM/validation/" \
   --resume_from_checkpoint="latest" \
   --wanna_bg=1 \
   --caption_column="prompt" \
