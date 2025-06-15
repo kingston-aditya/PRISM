@@ -24,7 +24,6 @@ import shutil
 from contextlib import nullcontext
 from pathlib import Path
 from PIL import Image
-from itertools import product
 
 import datasets
 import numpy as np
@@ -69,12 +68,13 @@ from diffusers.utils import (
 )
 from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
 from diffusers.utils.import_utils import is_torch_npu_available, is_xformers_available
+from diffusers.utils.torch_utils import is_compiled_module
 
 import pdb as pdb_original
 import glob, json
 
 from pipeline1 import EncoderModel, ProjectLayer
-from trinity_dataloader import SDXLInferDataset, SDXLTrainDataset
+from trinity_dataloader import SDXLInferDataset
 
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
@@ -279,7 +279,7 @@ def parse_args(input_args=None):
         help="Whether to train the text encoder. If set, the text encoder should be float32 precision.",
     )
     parser.add_argument(
-        "--train_batch_size", type=int, default=1, help="Batch size (per device) for the training dataloader."
+        "--train_batch_size", type=int, default=16, help="Batch size (per device) for the training dataloader."
     )
     parser.add_argument("--num_train_epochs", type=int, default=100)
     parser.add_argument(
@@ -349,9 +349,9 @@ def parse_args(input_args=None):
         "--lr_warmup_steps", type=int, default=500, help="Number of steps for the warmup in the lr scheduler."
     )
     parser.add_argument(
-        "--num_images_pp",
-        type=int,
-        default=10,
+        "--snr_gamma",
+        type=float,
+        default=None,
         help="SNR weighting gamma to be used if rebalancing the loss. Recommended value is 5.0. "
         "More details here: https://huggingface.co/papers/2303.09556.",
     )
@@ -488,11 +488,13 @@ def read_eval_dataset():
     # read multiple files
     json_obj = {"image":[], "prompt":[], "object":[]}
 
-    for name in glob.glob("/nfshomes/asarkar6/aditya/PRISM/validation/*.jsonl"):
-        with open(os.path.join("/nfshomes/asarkar6/aditya/PRISM/validation/", name), "r") as f:
+    for name in glob.glob(os.path.join("/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again/","metadata*.jsonl_dup")):
+        with open(os.path.join("/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again/", name), "r") as f:
             for line in f:
                 try:
                     temp = json.loads(line.strip())
+                    # saves the image
+                    json_obj["image"].append(temp["file_name"])
                     # saves the text prompt
                     json_obj["prompt"].append(temp["prompt"])
                     # saves the object
@@ -511,6 +513,7 @@ def encode_object(batch, img_encoders, img_tokenizers):
 
     # create the image embeddings
     with torch.no_grad():
+        idx = 0
         for img_tokenizer, img_encoder in zip(img_tokenizers, img_encoders):
             try:
                 img_inputs = img_tokenizer(
@@ -524,9 +527,15 @@ def encode_object(batch, img_encoders, img_tokenizers):
                 bs_embed, seq_len, _ = img_embeds.shape
                 img_embeds = img_embeds.view(bs_embed, seq_len, -1)
             except Exception as e:
-                print("Unable to read this !!!")
+                if idx == 0:
+                    img_embeds = torch.randn_like(torch.zeros([len(batch), 257, 1024])) * 1e-3
+                else:
+                    img_embeds = torch.randn_like(torch.zeros([len(batch), 257, 1664])) * 1e-3
+                bs_embed, seq_len, _ = img_embeds.shape
+                img_embeds = img_embeds.view(bs_embed, seq_len, -1)
 
             # We are only ALWAYS interested in the pooled output of the final text encoder
+            idx+=1
             object_embeds_list.append(img_embeds)
 
     # two image encoders - 257x1024 + 257x1664 = 257x2688
@@ -654,13 +663,13 @@ def main(args):
         if args.output_dir is not None:
             os.makedirs(args.output_dir, exist_ok=True)
 
-    # def load_model_hook(models, input_dir):
-    #     models.clear()
+    def load_model_hook(models, input_dir):
+        models.clear()
 
-    #     # load trinity and projection layer
-    #     trinity.load_state_dict(torch.load(os.path.join(input_dir, "trinity_checkpoint"+".pt"), weights_only=True))
-    #     proj_layer.load_state_dict(torch.load(os.path.join(input_dir, "proj_checkpoint"+".pt"), weights_only=True))
-    # accelerator.register_load_state_pre_hook(load_model_hook)
+        # load trinity and projection layer
+        trinity.load_state_dict(torch.load(os.path.join(input_dir, "trinity_checkpoint"+".pt"), weights_only=True))
+        proj_layer.load_state_dict(torch.load(os.path.join(input_dir, "proj_checkpoint"+".pt"), weights_only=True))
+    accelerator.register_load_state_pre_hook(load_model_hook)
 
     # Load the tokenizers
     tokenizer_one = AutoTokenizer.from_pretrained(
@@ -754,16 +763,6 @@ def main(args):
     trinity = EncoderModel(2048, 2048, num_blocks=args.blocks)
     proj_layer = ProjectLayer(2048, 2688)
 
-    # load trinity and projection layer
-    all_pths = glob.glob(os.path.join(args.output_dir, "sdxl-checkpoint-*"))
-    path_name = sorted(all_pths, key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
-    input_dir = os.path.join(args.output_dir, path_name)
-    print(os.path.join(input_dir, "trinity_checkpoint"+".pt"))
-
-    # load trinity and projection layer
-    trinity.load_state_dict(torch.load(os.path.join(input_dir, "trinity_checkpoint"+".pt")))
-    proj_layer.load_state_dict(torch.load(os.path.join(input_dir, "proj_checkpoint"+".pt")))
-
     # load trinity to cuda
     trinity.to(accelerator.device)
     proj_layer.to(accelerator.device)
@@ -771,8 +770,13 @@ def main(args):
     # Prepare everything with our `accelerator`.
     trinity, proj_layer = accelerator.prepare(trinity, proj_layer)
 
-    # accelerator.print(f"Resuming from checkpoint {path_name}")
-    # accelerator.load_state(os.path.join(args.output_dir, path_name))
+    # load trinity and projection layer
+    all_pths = glob.glob(os.path.join(args.output_dir, "sdxl-checkpoint-*"))
+    path_name = sorted(all_pths, key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
+    input_dir = os.path.join(args.output_dir, path_name)
+
+    accelerator.print(f"Resuming from checkpoint {path_name}")
+    accelerator.load_state(os.path.join(args.output_dir, path_name))
     
     trinity.eval()
     proj_layer.eval()
@@ -803,8 +807,6 @@ def main(args):
     # Make sure vae.dtype is consistent with the unet.dtype
     if args.mixed_precision == "fp16":
         vae.to(weight_dtype)
-    
-    # load SDXL
     pipeline = StableDiffusionXLPipeline.from_pretrained(
             args.pretrained_model_name_or_path,
             vae=vae,
@@ -813,14 +815,11 @@ def main(args):
             torch_dtype=weight_dtype,
             cache_dir=args.cache_dir
         )
-    
     # load attention processors
-    accelerator.print(path_name)
     pipeline.load_lora_weights(os.path.join(args.output_dir, path_name), prefix=None)
     pipeline.to(accelerator.device)
     pipeline.set_progress_bar_config(disable=True)
     
-    # training loop
     for step, batch in enumerate(tqdm(train_dataloader, desc="Inferring")):
         prompt_embeds, pooled_prompt_embeds = encode_prompt(
                     batch["prompt_embeds_1"],
@@ -830,21 +829,24 @@ def main(args):
 
         # encode object images
         object_prompt_embeds = []
-        try:
-            for _, item in enumerate(batch["object_prompt_embeds"]):
-                if len(item) > 0:
-                    encoded_object = encode_object(item, img_encoders, img_tokenizers)
-                    tok_sz = encoded_object.shape[-2]//len(item)
-                    if len(item) == 1:
-                        encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0), encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
-                    elif len(item) == 2:
-                        encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
-                    else:
-                        pass
-                    encoded_object = encoded_object.to(accelerator.device)
-                object_prompt_embeds.append(encoded_object)
-        except:
-            print("NO OBJECTS PRESENT !!!")
+        # print(len(batch["object_prompt_embeds"][0]))
+        for _, item in enumerate(batch["object_prompt_embeds"]):
+            if len(item) > 0:
+                encoded_object = encode_object(item, img_encoders, img_tokenizers)
+                tok_sz = encoded_object.shape[-2]//len(item)
+                if len(item) == 1:
+                    encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0), encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
+                elif len(item) == 2:
+                    encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
+                else:
+                    pass
+                encoded_object = encoded_object.to(accelerator.device)
+            else:
+                print("Eps-pad - Corrupt Object !!! L-1011")
+                encoded_object = torch.randn_like(torch.zeros((1,771,2688))) * 1e-3
+                encoded_object = encoded_object.to(text_encoder_one.device)
+
+            object_prompt_embeds.append(encoded_object)
         object_prompt_embeds = torch.stack(object_prompt_embeds).squeeze()
 
         # get multimodal prompts
@@ -854,6 +856,7 @@ def main(args):
         # normalize everything
         object_prompt_embeds = object_prompt_embeds/torch.norm(object_prompt_embeds, p=2, dim=-1, keepdim=True)
         prompt_embeds = prompt_embeds/torch.norm(prompt_embeds, p=2, dim=-1, keepdim=True)
+
         with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
             object_prompt_embeds = proj_layer(object_prompt_embeds)
         prompt_embeds = multimodal_encode_prompt(prompt_embeds, object_prompt_embeds)
@@ -871,17 +874,14 @@ def main(args):
         trinity_embeds = trinity_embeds/torch.norm(trinity_embeds, p=2, dim=-1, keepdim=True)
 
         # load the original SDXL model
-        images = pipeline(prompt_embeds=trinity_embeds, pooled_prompt_embeds=pooled_prompt_embeds, num_inference_steps=50, num_images_per_prompt=args.num_images_pp).images
-
-        for p_idx, i_idx in product(range(prompt_embeds.shape[0]), range(args.num_images_pp)):
-            idx = p_idx * args.num_images_pp + i_idx
-            pdx = step * prompt_embeds.shape[0] + p_idx
-            images[idx].save(os.path.join(args.backup, f"prompt{pdx}_img{i_idx}.png"))
+        images = pipeline(prompt_embeds=trinity_embeds, pooled_prompt_embeds=pooled_prompt_embeds).images
 
     # accelerator.wait_for_everyone()
     accelerator.end_training()
+    return images
 
 if __name__ == "__main__":
     args = parse_args()
-    main(args)
-    
+    images = main(args)
+    # for idx, image in enumerate(images):
+    #     image.save(os.path.join("/nfshomes/asarkar6/aditya/", "sample_"+str(idx)+".png"))
