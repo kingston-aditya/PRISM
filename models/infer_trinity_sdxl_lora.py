@@ -355,6 +355,14 @@ def parse_args(input_args=None):
         help="SNR weighting gamma to be used if rebalancing the loss. Recommended value is 5.0. "
         "More details here: https://huggingface.co/papers/2303.09556.",
     )
+
+    parser.add_argument(
+        "--valid_path_name", 
+        type=str, 
+        default="/nfshomes/asarkar6/aditya/PRISM/validation/", 
+        help="Validation path name."
+    )
+
     parser.add_argument(
         "--allow_tf32",
         action="store_true",
@@ -484,12 +492,12 @@ def import_model_class_from_model_name_or_path(pretrained_model_name_or_path: st
         raise ValueError(f"{model_class} is not supported.")
 
 # TODO - read a batch of image-text pairs  
-def read_eval_dataset():
+def read_eval_dataset(args):
     # read multiple files
     json_obj = {"image":[], "prompt":[], "object":[]}
 
-    for name in glob.glob("/nfshomes/asarkar6/aditya/PRISM/validation/*.jsonl"):
-        with open(os.path.join("/nfshomes/asarkar6/aditya/PRISM/validation/", name), "r") as f:
+    for name in glob.glob(os.path.join(args.valid_path_name, "*.jsonl")):
+        with open(os.path.join(args.valid_path_name, name), "r") as f:
             for line in f:
                 try:
                     temp = json.loads(line.strip())
@@ -654,14 +662,6 @@ def main(args):
         if args.output_dir is not None:
             os.makedirs(args.output_dir, exist_ok=True)
 
-    # def load_model_hook(models, input_dir):
-    #     models.clear()
-
-    #     # load trinity and projection layer
-    #     trinity.load_state_dict(torch.load(os.path.join(input_dir, "trinity_checkpoint"+".pt"), weights_only=True))
-    #     proj_layer.load_state_dict(torch.load(os.path.join(input_dir, "proj_checkpoint"+".pt"), weights_only=True))
-    # accelerator.register_load_state_pre_hook(load_model_hook)
-
     # Load the tokenizers
     tokenizer_one = AutoTokenizer.from_pretrained(
         args.pretrained_model_name_or_path,
@@ -712,18 +712,9 @@ def main(args):
 
     # For mixed precision training we cast all non-trainable weights (vae, non-lora text_encoder and non-lora unet) to half-precision
     # as these weights are only used for inference, keeping weights in full precision is not required.
-    weight_dtype = torch.float32
-    if accelerator.mixed_precision == "fp16":
-        weight_dtype = torch.float16
-    elif accelerator.mixed_precision == "bf16":
-        weight_dtype = torch.bfloat16
+    weight_dtype = torch.float16
 
-    # Move unet, vae and text_encoder to device and cast to weight_dtype
-    # The VAE is in float32 to avoid NaN losses.
-    if args.pretrained_vae_model_name_or_path is None:
-        vae.to(accelerator.device, dtype=torch.float32)
-    else:
-        vae.to(accelerator.device, dtype=weight_dtype)
+    vae.to(accelerator.device, dtype=weight_dtype)
     text_encoder_one.to(accelerator.device, dtype=weight_dtype)
     text_encoder_two.to(accelerator.device, dtype=weight_dtype)
         
@@ -760,25 +751,21 @@ def main(args):
     input_dir = os.path.join(args.output_dir, path_name)
     print(os.path.join(input_dir, "trinity_checkpoint"+".pt"))
 
+     # load trinity to cuda
+    trinity.to(accelerator.device, dtype=weight_dtype)
+    proj_layer.to(accelerator.device, dtype=weight_dtype)
+
+    trinity, proj_layer = accelerator.prepare(trinity, proj_layer)
+
     # load trinity and projection layer
     trinity.load_state_dict(torch.load(os.path.join(input_dir, "trinity_checkpoint"+".pt")))
     proj_layer.load_state_dict(torch.load(os.path.join(input_dir, "proj_checkpoint"+".pt")))
-
-    # load trinity to cuda
-    trinity.to(accelerator.device)
-    proj_layer.to(accelerator.device)
-
-    # Prepare everything with our `accelerator`.
-    trinity, proj_layer = accelerator.prepare(trinity, proj_layer)
-
-    # accelerator.print(f"Resuming from checkpoint {path_name}")
-    # accelerator.load_state(os.path.join(args.output_dir, path_name))
     
     trinity.eval()
     proj_layer.eval()
 
     # load the dataset
-    json_obj = read_eval_dataset()
+    json_obj = read_eval_dataset(args)
 
     # Get the specified interpolation method from the args
     def collate_fn(batch):
@@ -801,8 +788,7 @@ def main(args):
     )
 
     # Make sure vae.dtype is consistent with the unet.dtype
-    if args.mixed_precision == "fp16":
-        vae.to(weight_dtype)
+    vae.to(weight_dtype)
     
     # load SDXL
     pipeline = StableDiffusionXLPipeline.from_pretrained(
@@ -854,8 +840,16 @@ def main(args):
         # normalize everything
         object_prompt_embeds = object_prompt_embeds/torch.norm(object_prompt_embeds, p=2, dim=-1, keepdim=True)
         prompt_embeds = prompt_embeds/torch.norm(prompt_embeds, p=2, dim=-1, keepdim=True)
+
+        # change the data to float 16.
+        object_prompt_embeds.to(dtype=weight_dtype)
+        prompt_embeds.to(dtype=weight_dtype)
+
         with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
             object_prompt_embeds = proj_layer(object_prompt_embeds)
+        if len(object_prompt_embeds.size()) == 2:
+            object_prompt_embeds = object_prompt_embeds.unsqueeze(0)
+
         prompt_embeds = multimodal_encode_prompt(prompt_embeds, object_prompt_embeds)
         prompt_embeds = prompt_embeds.to(accelerator.device, dtype=weight_dtype)
 
@@ -871,15 +865,14 @@ def main(args):
         trinity_embeds = trinity_embeds/torch.norm(trinity_embeds, p=2, dim=-1, keepdim=True)
 
         # load the original SDXL model
-        images = pipeline(prompt_embeds=trinity_embeds, pooled_prompt_embeds=pooled_prompt_embeds, num_inference_steps=50, num_images_per_prompt=args.num_images_pp).images
+        images = pipeline(prompt_embeds=trinity_embeds, pooled_prompt_embeds=pooled_prompt_embeds, num_inference_steps=50, num_images_per_prompt=args.num_validation_images).images
 
-        for p_idx, i_idx in product(range(prompt_embeds.shape[0]), range(args.num_images_pp)):
-            idx = p_idx * args.num_images_pp + i_idx
+        for p_idx, i_idx in product(range(prompt_embeds.shape[0]), range(args.num_validation_images)):
+            idx = p_idx * args.num_validation_images + i_idx
             pdx = step * prompt_embeds.shape[0] + p_idx
             images[idx].save(os.path.join(args.backup, f"prompt{pdx}_img{i_idx}.png"))
 
-    # accelerator.wait_for_everyone()
-    accelerator.end_training()
+        accelerator.end_training()
 
 if __name__ == "__main__":
     args = parse_args()

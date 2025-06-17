@@ -809,10 +809,10 @@ def main(args):
                     pass
             
             # save the rem 2 models
-            proj_layer_clean = unwrap_model(proj_layer)
-            trinity_clean = unwrap_model(trinity)
-            torch.save(proj_layer_clean.state_dict(), os.path.join(output_dir, "proj_checkpoint"+".pt"))
-            torch.save(trinity_clean.state_dict(), os.path.join(output_dir, "trinity_checkpoint"+".pt"))
+            # proj_layer_clean = unwrap_model(proj_layer)
+            # trinity_clean = unwrap_model(trinity)
+            torch.save(proj_layer.state_dict(), os.path.join(output_dir, "proj_checkpoint"+".pt"))
+            torch.save(trinity.state_dict(), os.path.join(output_dir, "trinity_checkpoint"+".pt"))
 
             for _, model in enumerate(models):
                 if weights:
@@ -825,34 +825,32 @@ def main(args):
 
         while len(models) > 0:
             model = models.pop()
-
             if isinstance(model, type(unwrap_model(unet))):
                 unet_ = model
             else:
-                # no need to load the trinity adapters
                 pass
 
         lora_state_dict, _ = StableDiffusionLoraLoaderMixin.lora_state_dict(input_dir)
         unet_state_dict = {f"{k.replace('unet.', '')}": v for k, v in lora_state_dict.items() if k.startswith("unet.")}
         unet_state_dict = convert_unet_state_dict_to_peft(unet_state_dict)
         
-        # incompatible_keys = set_peft_model_state_dict(unet_, unet_state_dict, adapter_name="default")
+        incompatible_keys = set_peft_model_state_dict(unet_, unet_state_dict, adapter_name="default")
         
-        # if incompatible_keys is not None:
-        #     # check only for unexpected keys
-        #     unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
-        #     if unexpected_keys:
-        #         logger.warning(
-        #             f"Loading adapter weights from state_dict led to unexpected keys not found in the model: "
-        #             f" {unexpected_keys}. "
-        #         )
+        if incompatible_keys is not None:
+            # check only for unexpected keys
+            unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
+            if unexpected_keys:
+                logger.warning(
+                    f"Loading adapter weights from state_dict led to unexpected keys not found in the model: "
+                    f" {unexpected_keys}. "
+                )
 
         # Make sure the trainable params are in float32. This is again needed since the base models
         # are in `weight_dtype`. More details:
         # https://github.com/huggingface/diffusers/pull/6514#discussion_r1449796804
-        # if args.mixed_precision == "fp16":
-        #     models = [unet_]
-        #     cast_training_params(models, dtype=torch.float32)
+        if args.mixed_precision == "fp16":
+            models = [unet_]
+            cast_training_params(models, dtype=torch.float32)
 
     accelerator.register_save_state_pre_hook(save_model_hook)
     accelerator.register_load_state_pre_hook(load_model_hook)
@@ -870,11 +868,6 @@ def main(args):
         args.learning_rate = (
             args.learning_rate * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
         )
-
-    # Make sure the trainable params are in float32.
-    if args.mixed_precision == "fp16":
-        models = [unet]
-        cast_training_params(models, dtype=torch.float32)
 
     # Use 8-bit Adam for lower memory usage or to fine-tune the model in 16GB GPUs
     if args.use_8bit_adam:
@@ -915,7 +908,6 @@ def main(args):
 
     # Get the specified interpolation method from the args
     # interpolation = getattr(transforms.InterpolationMode, args.image_interpolation_mode.upper(), None)
-
     def collate_fn(batch):
         pixel_values = [item["pixel_values"] for item in batch]
         prompt_embeds_1 = torch.stack([item["prompt_embeds_1"] for item in batch])
@@ -945,32 +937,23 @@ def main(args):
     trinity = EncoderModel(2048, 2048, num_blocks=args.blocks)
     proj_layer = ProjectLayer(2048, 2688)
 
+    # requires grad is true
+    trinity.requires_grad_(True)
+    proj_layer.requires_grad_(True)
+
     # load the weights
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
-    if args.resume_from_checkpoint == "latest":
-        all_pths = glob.glob(os.path.join(args.output_dir, "sdxl-checkpoint-*"))
-        if len(all_pths) != 0:
-            path_name = sorted(all_pths, key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
-            accelerator.print(f"Resuming from checkpoint {path_name}")
-            input_dir = os.path.join(args.output_dir, path_name)
-            # load the unet
-            accelerator.load_state(input_dir)
 
-            # load trinity and projection layer
-            trinity.load_state_dict(torch.load(os.path.join(input_dir, "trinity_checkpoint"+".pt")))
-            proj_layer.load_state_dict(torch.load(os.path.join(input_dir, "proj_checkpoint"+".pt")))
+    # only upcast trainable parameters into fp32
+    # Make sure the trainable params are in float32.
+    if args.mixed_precision == "fp16":
+        models = [unet]
+        cast_training_params(models, dtype=torch.float32)
 
-            global_step = int(path_name.split("-")[-1])
-            initial_global_step = global_step
-            first_epoch = global_step // num_update_steps_per_epoch
-        else:
-            initial_global_step = 0
-            first_epoch = 0
-            global_step = 0
-    else:
-        initial_global_step = 0
-        first_epoch = 0
-        global_step = 0
+        for m in [trinity, proj_layer]:
+            for param in m.parameters():
+                if param.requires_grad:
+                    param.data = param.to(dtype=torch.float32)
 
     params_to_optimize = list(lora_layers) + list(trinity.parameters()) + list(proj_layer.parameters())
     optimizer = optimizer_class(
@@ -995,8 +978,8 @@ def main(args):
     )
 
     # load trinity to cuda
-    trinity.to(accelerator.device)
-    proj_layer.to(accelerator.device)
+    trinity.to(accelerator.device, dtype=torch.float32)
+    proj_layer.to(accelerator.device, dtype=torch.float32)
 
     # Prepare everything with our `accelerator`.
     unet, optimizer, train_dataloader, lr_scheduler, trinity, proj_layer = accelerator.prepare(unet, optimizer, train_dataloader, lr_scheduler, trinity, proj_layer)
@@ -1026,6 +1009,38 @@ def main(args):
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
     global_step = 0
     first_epoch = 0
+
+    # resume from checkpoint
+    if args.resume_from_checkpoint == "latest":
+        all_pths = glob.glob(os.path.join(args.output_dir, "sdxl-checkpoint-*"))
+        if len(all_pths) != 0:
+            path_name = sorted(all_pths, key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
+            accelerator.print(f"Resuming from checkpoint {path_name}")
+            input_dir = os.path.join(args.output_dir, path_name)
+            
+            # load the unet
+            accelerator.load_state(input_dir)
+
+            # load the models and upcast it to float32
+            trinity.load_state_dict(torch.load(os.path.join(input_dir, "trinity_checkpoint"+".pt")))
+            proj_layer.load_state_dict(torch.load(os.path.join(input_dir, "proj_checkpoint"+".pt")))
+            for m in [trinity, proj_layer]:
+                for param in m.parameters():
+                    if param.requires_grad:
+                        param.data = param.to(dtype=torch.float32)
+
+
+            global_step = int(path_name.split("-")[-1])
+            initial_global_step = global_step
+            first_epoch = global_step // num_update_steps_per_epoch
+        else:
+            initial_global_step = 0
+            first_epoch = 0
+            global_step = 0
+    else:
+        initial_global_step = 0
+        first_epoch = 0
+        global_step = 0
 
     progress_bar = tqdm(
         range(0, args.max_train_steps),
@@ -1095,8 +1110,8 @@ def main(args):
                 object_prompt_embeds = object_prompt_embeds/torch.norm(object_prompt_embeds, p=2, dim=-1, keepdim=True)
                 prompt_embeds = prompt_embeds/torch.norm(prompt_embeds, p=2, dim=-1, keepdim=True)
 
-                with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
-                    object_prompt_embeds = proj_layer(object_prompt_embeds)
+                # with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
+                object_prompt_embeds = proj_layer(object_prompt_embeds)
                 prompt_embeds = multimodal_encode_prompt(prompt_embeds, object_prompt_embeds)
                 prompt_embeds = prompt_embeds.to(accelerator.device, dtype=weight_dtype)
 
@@ -1105,8 +1120,8 @@ def main(args):
 
                 # get the trinity embeds
                 # trinity_embeds = prompt_embeds
-                with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
-                    trinity_embeds = trinity(prompt_embeds, prompt_embeds, txt_tok_len, img_tok_len, typ=args.mask_typ)
+                # with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
+                trinity_embeds = trinity(prompt_embeds, prompt_embeds, txt_tok_len, img_tok_len, typ=args.mask_typ)
                 
                 # normalize everything
                 trinity_embeds = trinity_embeds/torch.norm(trinity_embeds, p=2, dim=-1, keepdim=True)
