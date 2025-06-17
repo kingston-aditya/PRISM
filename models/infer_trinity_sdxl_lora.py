@@ -665,7 +665,9 @@ def main(args):
 
     def load_model_hook(models, input_dir):
         models.clear()
-
+        # import pdb; pdb.set_trace()
+        # print("Checkpoint keys:", torch.load(os.path.join(input_dir, "trinity_checkpoint"+".pt"), weights_only=True)['state_dict'].keys())
+        # print("Model keys:", trinity.state_dict().keys())
         # load trinity and projection layer
         trinity.load_state_dict(torch.load(os.path.join(input_dir, "trinity_checkpoint"+".pt"), weights_only=True))
         proj_layer.load_state_dict(torch.load(os.path.join(input_dir, "proj_checkpoint"+".pt"), weights_only=True))
@@ -771,7 +773,7 @@ def main(args):
     trinity, proj_layer = accelerator.prepare(trinity, proj_layer)
 
     # load trinity and projection layer
-    all_pths = glob.glob(os.path.join(args.output_dir, "sdxl-checkpoint-*"))
+    all_pths = glob.glob(os.path.join(args.output_dir, "sdxl-checkpoint-10000"))
     path_name = sorted(all_pths, key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
     input_dir = os.path.join(args.output_dir, path_name)
 
@@ -786,6 +788,7 @@ def main(args):
 
     # Get the specified interpolation method from the args
     def collate_fn(batch):
+        if not batch: return None
         prompt_embeds_1 = torch.stack([item["prompt_embeds_1"] for item in batch])
         prompt_embeds_2 = torch.stack([item["prompt_embeds_2"] for item in batch])
         object_prompt_embeds = [item["object_prompt_embeds"] for item in batch]
@@ -821,6 +824,7 @@ def main(args):
     pipeline.set_progress_bar_config(disable=True)
     
     for step, batch in enumerate(tqdm(train_dataloader, desc="Inferring")):
+        if not batch: continue
         prompt_embeds, pooled_prompt_embeds = encode_prompt(
                     batch["prompt_embeds_1"],
                     batch["prompt_embeds_2"],
@@ -875,6 +879,16 @@ def main(args):
 
         # load the original SDXL model
         images = pipeline(prompt_embeds=trinity_embeds, pooled_prompt_embeds=pooled_prompt_embeds).images
+
+        for idx, image in enumerate(images):
+                base_path = "/home/saividyaranya/PRISM/all_output_logs/infer_images2/"
+                full_path = os.path.join(base_path, os.path.basename(path_name))
+                if not os.path.exists(full_path):
+                    os.mkdir(full_path)
+                    print(f"Directory '{full_path}' created from trinity_sdxl_lora.")
+                else:
+                    print(f"Directory '{full_path}' already exists. trinity_sdxl_lora")
+                image.save(os.path.join(full_path, "sample_"+str(step)+str(idx)+".png"))
 
     # accelerator.wait_for_everyone()
     accelerator.end_training()

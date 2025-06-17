@@ -183,11 +183,12 @@ class SDXLInferDataset(Dataset):
 
             # process the bbox
             for idx, item in enumerate(bbox_info):
-                img_mat = Image.open(os.path.join(self.args.valid_path_name, item["img_pth"])).convert("RGB")
+                img_mat = Image.open(os.path.join('/data/home/saividyaranya/PRISM/validation', item["img_pth"])).convert("RGB")
                 img_mat = transform_obj(img_mat, self.args)
                 bbox_values.append(img_mat)
 
         elif len(bbox_info) == 0:
+            return None
             raise Exception("Give me an object")
             
         return {
