@@ -557,6 +557,9 @@ def encode_object(batch, lab_batch, lab_atn_batch, img_encoders, img_tokenizers,
 
 # Encode text prompt - Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
 def encode_prompt(input_ids, attn_mask, text_encoder):
+    if len(input_ids.size()) != 2:
+        input_ids = input_ids.unsqueeze(0)
+        attn_mask = attn_mask.unsqueeze(0)
     with torch.no_grad():
         prompt_embeds = text_encoder(input_ids.to(text_encoder.device), attention_mask=attn_mask.to(text_encoder.device))[0]
     return prompt_embeds
@@ -706,17 +709,17 @@ def main(args):
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
-    logger.info("***** Running training *****")
-    logger.info(f"  Num examples = {len(precomputed_dataset)}")
-    logger.info(f"  Num Epochs = {args.num_train_epochs}")
-    logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
-    logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
-    logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
-    logger.info(f"  Total optimization steps = {args.max_train_steps}")
+    # load trinity to cuda
+    trinity.to(accelerator.device)
+    proj_layer.to(accelerator.device)
+    align_trinity.to(accelerator.device)
+
+    # Prepare everything with our `accelerator`.
+    trinity, proj_layer, align_trinity = accelerator.prepare(trinity, proj_layer, align_trinity)
 
     # resume from checkpoint
     if args.resume_from_checkpoint == "latest":
-        all_pths = glob.glob(os.path.join(args.output_dir, "pixart-checkpoint-*"))
+        all_pths = glob.glob(os.path.join(args.output_dir, "pixart-pl3-checkpoint-*"))
         if len(all_pths) != 0:
             path_name = sorted(all_pths, key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
 
@@ -740,18 +743,18 @@ def main(args):
     else:
         pass
 
-    # load trinity to cuda
-    trinity.to(accelerator.device)
-    proj_layer.to(accelerator.device)
-    align_trinity.to(accelerator.device)
-
-    # Prepare everything with our `accelerator`.
-    trinity, proj_layer, align_trinity = accelerator.prepare(trinity, proj_layer, align_trinity)
-
     # evaluation mode
     trinity.eval()
     proj_layer.eval()
     align_trinity.eval()
+
+    logger.info("***** Running training *****")
+    logger.info(f"  Num examples = {len(precomputed_dataset)}")
+    logger.info(f"  Num Epochs = {args.num_train_epochs}")
+    logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
+    logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
+    logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
+    logger.info(f"  Total optimization steps = {args.max_train_steps}")
 
     for step, batch in enumerate(tqdm(train_dataloader, desc="Inferring")):
         # encode prompts
@@ -761,9 +764,9 @@ def main(args):
 
         # encode object images
         object_prompt_embeds = []
-        # print(len(batch["object_prompt_embeds"][0]))
+        object_label_embeds = []
         flag = 0
-        for _, item in enumerate(batch["object_prompt_embeds"]):
+        for _, (item, litem, aitem) in enumerate(zip(batch["object_prompt_embeds"], batch["object_label_embeds"], batch["label_attn_mask"])):
             if len(item) > 0:
                 try:
                     encoded_object, lab_prompt_embeds = encode_object(item, litem, aitem, img_encoders, img_tokenizers, text_encoder)
@@ -790,6 +793,7 @@ def main(args):
                 flag = 1 
 
             object_prompt_embeds.append(encoded_object)
+            object_label_embeds.append(lab_prompt_embeds)
         
         if flag == 1:
             print("FLAG is 1.. padding about to happen but stopped!!")
@@ -797,6 +801,11 @@ def main(args):
         
         object_prompt_embeds = torch.stack(object_prompt_embeds).squeeze()
         object_label_embeds = torch.stack(object_label_embeds).squeeze()
+
+        if len(object_prompt_embeds.size()) == 2:
+            object_prompt_embeds = object_prompt_embeds.unsqueeze(0)
+        if len(object_label_embeds.size()) == 2:
+            object_label_embeds = object_label_embeds.unsqueeze(0)
 
         # normalize everything
         object_prompt_embeds = object_prompt_embeds/torch.norm(object_prompt_embeds, p=2, dim=-1, keepdim=True)
@@ -823,6 +832,7 @@ def main(args):
 
         # Predict the noise residual and compute loss
         # load the original Pixart alpha model
+        prompt_attention_mask = prompt_attention_mask.to(accelerator.device, dtype=weight_dtype)
         images = pipeline(prompt_embeds=trinity_embeds, num_inference_steps=50, prompt_attention_mask=prompt_attention_mask, num_images_per_prompt=args.num_validation_images).images
 
         for p_idx, i_idx in product(range(prompt_embeds.shape[0]), range(args.num_validation_images)):

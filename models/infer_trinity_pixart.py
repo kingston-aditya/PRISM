@@ -549,6 +549,9 @@ def encode_object(batch, img_encoders, img_tokenizers):
 
 # Encode text prompt - Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
 def encode_prompt(input_ids, attn_mask, text_encoder):
+    if len(input_ids.size()) != 2:
+        input_ids = input_ids.unsqueeze(0)
+        attn_mask = attn_mask.unsqueeze(0)
     with torch.no_grad():
         prompt_embeds = text_encoder(input_ids.to(text_encoder.device), attention_mask=attn_mask.to(text_encoder.device))[0]
     return prompt_embeds
@@ -778,6 +781,11 @@ def main(args):
         # get multimodal prompts
         txt_tok_len = prompt_embeds.shape[-2]
         img_tok_len = object_prompt_embeds.shape[-2]
+
+        if len(object_prompt_embeds.size()) == 2:
+            object_prompt_embeds = object_prompt_embeds.unsqueeze(0)
+        if len(object_label_embeds.size()) == 2:
+            object_label_embeds = object_label_embeds.unsqueeze(0)
 
         # normalize everything
         object_prompt_embeds = object_prompt_embeds/torch.norm(object_prompt_embeds, p=2, dim=-1, keepdim=True)

@@ -1073,12 +1073,12 @@ def main(args):
                         )
 
                         # save the rem 2 models
-                        proj_layer_ = accelerator.unwrap_model(proj_layer)
-                        trinity_ = accelerator.unwrap_model(trinity)
-                        align_trinity_ = accelerator.unwrap_model(align_trinity)
-                        torch.save(proj_layer_.state_dict(), os.path.join(save_path, "proj_checkpoint"+".pt"))
-                        torch.save(trinity_.state_dict(), os.path.join(save_path, "trinity_checkpoint"+".pt"))
-                        torch.save(align_trinity_.state_dict(), os.path.join(save_path, "altrinity_checkpoint"+".pt"))
+                        # proj_layer_ = accelerator.unwrap_model(proj_layer)
+                        # trinity_ = accelerator.unwrap_model(trinity)
+                        # align_trinity_ = accelerator.unwrap_model(align_trinity)
+                        torch.save(proj_layer.state_dict(), os.path.join(save_path, "proj_checkpoint"+".pt"))
+                        torch.save(trinity.state_dict(), os.path.join(save_path, "trinity_checkpoint"+".pt"))
+                        torch.save(align_trinity.state_dict(), os.path.join(save_path, "altrinity_checkpoint"+".pt"))
 
                         logger.info(f"Saved state to {save_path}")
 
