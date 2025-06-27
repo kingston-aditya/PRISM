@@ -213,7 +213,7 @@ class PixartTrainDataset(Dataset):
         flag = 0
         try:
             img_mat = Image.open(os.path.join(self.args.dataset_name, self.temp["image"][idx])).convert("RGB")
-        except RuntimeError as e:
+        except Exception as e:
             flag = 1
 
         # get the image objects
@@ -244,6 +244,7 @@ class PixartTrainDataset(Dataset):
                         temp_img = obj_img
                     
                     bbox_values.append(Image.fromarray(temp_img))
+        
         elif len(bbox_info) == 0 or flag==1:
             # get the prompt tokens
             with torch.no_grad():
@@ -269,6 +270,182 @@ class PixartTrainDataset(Dataset):
             "object_prompt_embeds": bbox_values,
             "pixel_values": pixel_values,
             "attn_mask": prompt_toks.attention_mask,
+            "filenames": os.path.join(self.args.dataset_name, self.temp["image"][idx])
+        }
+
+    def __len__(self):
+        return len(self.temp["prompt"])
+    
+class PixartTrainDataset_pl3(Dataset):
+    def __init__(self, temp, args, bg, max_length, txt_tokenizer):
+        # load dataset
+        self.temp = temp
+        self.args = args
+        self.txt_tokenizer = txt_tokenizer
+        self.max_length = max_length
+        self.bg = bg
+    
+    def __getitem__(self, idx):
+        # get the pixel values
+        flag = 0
+        try:
+            img_mat = Image.open(os.path.join(self.args.dataset_name, self.temp["image"][idx])).convert("RGB")
+        except Exception as e:
+            flag = 1
+
+        # get the image objects
+        bbox_values = []
+        bbox_labels = []
+        bbox_labels_attnmask = []
+        bbox_info = self.temp["object"][idx]
+        if len(bbox_info)>0 and flag==0:
+            # transform image and get the prompt tokens
+            pixel_values = transform_img(img_mat, self.args)
+            with torch.no_grad():
+                prompt_toks = self.txt_tokenizer(self.temp["prompt"][idx], max_length=self.max_length, padding="max_length", truncation=True, return_tensors="pt")
+            
+            for idx, item in enumerate(bbox_info):
+                x_min = int(item["xmin"])
+                x_max = min(int(item["xmax"]), self.bg.size[1])
+                y_min = int(item["ymin"])
+                y_max = min(int(item["ymax"]), self.bg.size[0])
+                label = "An image of " + str(item["labels"])
+
+                if (x_max-x_min)*(y_max-y_min)>0 and y_max>=y_min and x_max>=x_min:
+                    trans_y, trans_x = self.bg.size[0]//2 - (y_min+y_max)//2, self.bg.size[1]//2 - (x_min+x_max)//2
+                    obj_img = np.asarray(img_mat)[y_min:y_max, x_min:x_max]
+                    temp_img = np.asarray(self.bg)
+                    if self.args.wanna_bg == 1:
+                        try:
+                            temp_img[y_min + trans_y:y_max + trans_y, x_min+trans_x:x_max+trans_x] = obj_img
+                        except:
+                            temp_img = obj_img
+                    else:
+                        temp_img = obj_img
+                    
+                    bbox_values.append(Image.fromarray(temp_img))
+                    temp_txt_out = self.txt_tokenizer(label, max_length=self.max_length, padding="max_length", truncation=True, return_tensors="pt")
+                    bbox_labels.append(temp_txt_out.input_ids)
+                    bbox_labels_attnmask.append(temp_txt_out.attention_mask)
+        
+        elif len(bbox_info) == 0 or flag==1:
+            # get the prompt tokens
+            with torch.no_grad():
+                prompt_toks = self.txt_tokenizer("A smiling woman with a pink umbrella stands in front of a \"WELCOME TO THE LAKE\" sign, with a serene lake and green trees in the background.", max_length=self.max_length, padding="max_length", truncation=True, return_tensors="pt")
+            
+            pixel_values = transform_img(Image.open(os.path.join(self.args.backup, "temp_img.jpg")).convert("RGB"), self.args)
+            
+            bk_labels = ["\"WELCOME TO THE LAKE\" sign", "green trees", "woman"]
+            for i in range(3):
+                obj_img = Image.open(os.path.join(self.args.backup, "temp_obj_"+str(i)+".jpg"))
+                temp_img = self.bg
+                if self.args.wanna_bg == 1:
+                    try:
+                        temp_img.paste(obj_img, ((y_max-y_min)//2, (x_max-x_min)//2), mask=obj_img)
+                    except:
+                        temp_img = obj_img
+                else:
+                    temp_img = obj_img
+                temp_img = np.asarray(temp_img)
+                temp_prt = "An image of " + bk_labels[i]
+                temp_txt = self.txt_tokenizer(temp_prt, max_length=self.max_length, padding="max_length", truncation=True, return_tensors="pt")
+
+                bbox_labels.append(temp_txt.input_ids)
+                bbox_labels_attnmask.append(temp_txt.attention_mask)
+                bbox_values.append(Image.fromarray(temp_img))
+
+        return {
+            "prompt_embeds": prompt_toks.input_ids,
+            "object_prompt_embeds": bbox_values,
+            "object_label_embeds": bbox_labels,
+            "pixel_values": pixel_values,
+            "attn_mask": prompt_toks.attention_mask,
+            "label_attn_mask": bbox_labels_attnmask,
+            "filenames": os.path.join(self.args.dataset_name, self.temp["image"][idx])
+        }
+
+    def __len__(self):
+        return len(self.temp["prompt"])
+    
+class PixartInferDataset(Dataset):
+    def __init__(self, temp, args, max_length, txt_tokenizer):
+        # load dataset
+        self.temp = temp
+        self.args = args
+        self.txt_tokenizer = txt_tokenizer
+        self.max_length = max_length
+    
+    def __getitem__(self, idx):        
+        # get the image objects
+        bbox_values = []
+        bbox_info = self.temp["object"][idx]
+        if len(bbox_info) > 0:
+            # get the prompt tokens
+            with torch.no_grad():
+                prompt_toks = self.txt_tokenizer(self.temp["prompt"][idx], max_length=self.max_length, padding="max_length", truncation=True, return_tensors="pt")
+
+            # process the bbox
+            for idx, item in enumerate(bbox_info):
+                img_mat = Image.open(os.path.join(self.args.valid_path_name, item["img_pth"])).convert("RGB")
+                img_mat = transform_obj(img_mat, self.args)
+                bbox_values.append(img_mat)
+
+        elif len(bbox_info) == 0:
+            raise Exception("Give me an object")
+            
+        return {
+            "prompt_embeds": prompt_toks.input_ids,
+            "object_prompt_embeds": bbox_values,
+            "attn_mask": prompt_toks.attention_mask
+        }
+
+    def __len__(self):
+        return len(self.temp["prompt"])
+    
+class PixartInferDataset_pl3(Dataset):
+    def __init__(self, temp, args, max_length, txt_tokenizer):
+        # load dataset
+        self.temp = temp
+        self.args = args
+        self.txt_tokenizer = txt_tokenizer
+        self.max_length = max_length
+    
+    def __getitem__(self, idx):        
+        # get the image objects
+        bbox_values = []
+        bbox_labels = []
+        bbox_labels_attnmask = []
+        bbox_info = self.temp["object"][idx]
+        if len(bbox_info) > 0:
+            # get the prompt tokens
+            with torch.no_grad():
+                prompt_toks = self.txt_tokenizer(self.temp["prompt"][idx], max_length=self.max_length, padding="max_length", truncation=True, return_tensors="pt")
+
+            # process the bbox
+            for idx, item in enumerate(bbox_info):
+                # store the PIL images
+                img_mat = Image.open(os.path.join(self.args.valid_path_name, item["img_pth"])).convert("RGB")
+                img_mat = transform_obj(img_mat, self.args)
+
+                # store the labels
+                labs = "An image of " + str(item["labels"])
+                with torch.no_grad():
+                    labs_toks = self.txt_tokenizer(labs, max_length=self.max_length, padding="max_length", truncation=True, return_tensors="pt")
+                
+                # appends the image matrix and label tokens
+                bbox_values.append(img_mat)
+                bbox_labels.append(labs_toks.input_ids)
+                bbox_labels_attnmask.append(labs_toks.attention_mask)
+
+        elif len(bbox_info) == 0:
+            raise Exception("Give me an object")
+            
+        return {
+            "prompt_embeds": prompt_toks.input_ids,
+            "object_prompt_embeds": bbox_values,
+            "attn_mask": prompt_toks.attention_mask,
+            "label_attn_mask": bbox_labels_attnmask,
+            "object_label_embeds": bbox_labels,
         }
 
     def __len__(self):

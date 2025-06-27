@@ -53,7 +53,7 @@ import pdb as pdb_original
 import glob, json
 
 from pipeline1 import EncoderModel, ProjectLayer
-from trinity_dataloader import PixartTrainDataset
+from trinity_dataloader import PixartTrainDataset_pl3
 
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
@@ -524,14 +524,14 @@ def read_Trinity_dataset():
 
 
 # encode object prompt - Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
-def encode_object(batch, img_encoders, img_tokenizers):
+def encode_object(batch, lab_batch, lab_atn_batch, img_encoders, img_tokenizers, text_encoder):
     object_embeds_list = []
 
-    # create the image embeddings
     with torch.no_grad():
-        idx = 0
+        # create the image embeddings
         for img_tokenizer, img_encoder in zip(img_tokenizers, img_encoders):
             try:
+                # get object image embeddings
                 img_inputs = img_tokenizer(
                     images = batch,
                     return_tensors="pt",
@@ -542,23 +542,25 @@ def encode_object(batch, img_encoders, img_tokenizers):
                 img_embeds = img_embeds[-1][-2]
                 bs_embed, seq_len, _ = img_embeds.shape
                 img_embeds = img_embeds.view(bs_embed, seq_len, -1)
-            except Exception as e:
-                if idx == 0:
-                    img_embeds = torch.randn_like(torch.zeros([len(batch), 257, 1024])) * 1e-3
-                else:
-                    img_embeds = torch.randn_like(torch.zeros([len(batch), 257, 1664])) * 1e-3
-                bs_embed, seq_len, _ = img_embeds.shape
-                img_embeds = img_embeds.view(bs_embed, seq_len, -1)
+            except:
+                raise Exception("padding being done at encoding objects.")
 
             # We are only ALWAYS interested in the pooled output of the final text encoder
-            idx+=1
             object_embeds_list.append(img_embeds)
 
+        # create the label text embeddings
+        lab_prompt_embeds = text_encoder(torch.cat(lab_batch).to(text_encoder.device), attention_mask=torch.cat(lab_atn_batch).to(text_encoder.device))[0]
+
+    # fix the image embeddings  
     # two image encoders - 257x1024 + 257x1664 = 257x2688
-    prompt_embeds = torch.concat(object_embeds_list, dim=-1)
-    bt_size, tok_len, ebd_sz = prompt_embeds.size()
-    prompt_embeds = prompt_embeds.view(1,bt_size*tok_len,ebd_sz)
-    return prompt_embeds
+    object_embeds = torch.concat(object_embeds_list, dim=-1)
+    bt_size, tok_len, ebd_sz = object_embeds.size()
+    object_embeds = object_embeds.view(1, bt_size*tok_len, ebd_sz)
+
+    # fix the text embeddings
+    bt_size, tok_len, ebd_sz = lab_prompt_embeds.size()
+    lab_prompt_embeds = lab_prompt_embeds.view(1, bt_size*tok_len, ebd_sz)
+    return object_embeds, lab_prompt_embeds
 
 # Encode text prompt - Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
 def encode_prompt(input_ids, attn_mask, text_encoder):
@@ -768,17 +770,21 @@ def main(args):
         attn_mask = torch.stack([item["attn_mask"] for item in batch]).squeeze()
         object_prompt_embeds = [item["object_prompt_embeds"] for item in batch]
         filenames = [item["filenames"] for item in batch]
+        label_attn_mask = [item["label_attn_mask"] for item in batch]
+        object_label_embeds = [item["object_label_embeds"] for item in batch]
         return {
             "pixel_values": pixel_values,
             "prompt_embeds": prompt_embeds,
             "object_prompt_embeds": object_prompt_embeds,
+            "object_label_embeds": object_label_embeds,
             "attn_mask": attn_mask,
+            "label_attn_mask": label_attn_mask,
             "filenames": filenames
         } 
     
     # DataLoaders creation.
     bgs = Image.open(os.path.join(args.bg_dir, np.random.choice(os.listdir(args.bg_dir))))
-    precomputed_dataset = PixartTrainDataset(json_obj, args, bgs, max_length, text_tokenizer)
+    precomputed_dataset = PixartTrainDataset_pl3(json_obj, args, bgs, max_length, text_tokenizer)
     train_dataloader = torch.utils.data.DataLoader(
         precomputed_dataset,
         shuffle=False,
@@ -789,9 +795,10 @@ def main(args):
 
     # load the transformer
     trinity = EncoderModel(4096, 4096, num_blocks=args.blocks)
+    align_trinity = EncoderModel(4096, 4096, num_blocks=args.blocks)
     proj_layer = ProjectLayer(4096, 2688)
 
-    params_to_optimize = list(lora_layers) + list(trinity.parameters()) + list(proj_layer.parameters())
+    params_to_optimize = list(lora_layers) + list(trinity.parameters()) + list(align_trinity.parameters()) + list(proj_layer.parameters())
     optimizer = optimizer_cls(
         params_to_optimize,
         lr=args.learning_rate,
@@ -817,9 +824,10 @@ def main(args):
     # load trinity to cuda
     trinity.to(accelerator.device)
     proj_layer.to(accelerator.device)
+    align_trinity.to(accelerator.device)
 
     # Prepare everything with our `accelerator`.
-    transformer, optimizer, train_dataloader, lr_scheduler, trinity, proj_layer = accelerator.prepare(transformer, optimizer, train_dataloader, lr_scheduler, trinity, proj_layer)
+    transformer, optimizer, train_dataloader, lr_scheduler, trinity, align_trinity, proj_layer = accelerator.prepare(transformer, optimizer, train_dataloader, lr_scheduler, trinity, align_trinity, proj_layer)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -847,7 +855,7 @@ def main(args):
 
     # resume from checkpoint
     if args.resume_from_checkpoint == "latest":
-        all_pths = glob.glob(os.path.join(args.output_dir, "pixart-checkpoint-*"))
+        all_pths = glob.glob(os.path.join(args.output_dir, "pixart-pl3-checkpoint-*"))
         if len(all_pths) != 0:
             path_name = sorted(all_pths, key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
             accelerator.print(f"Resuming from checkpoint {path_name}")
@@ -857,8 +865,10 @@ def main(args):
             # load the trinity and proj layer
             trinity.load_state_dict(torch.load(os.path.join(os.path.join(args.output_dir, path_name), "trinity_checkpoint"+".pt"), weights_only=True))
             proj_layer.load_state_dict(torch.load(os.path.join(os.path.join(args.output_dir, path_name), "proj_checkpoint"+".pt"), weights_only=True))
+            align_trinity.load_state_dict(torch.load(os.path.join(os.path.join(args.output_dir, path_name), "altrinity_checkpoint"+".pt"), weights_only=True))
+
             if args.mixed_precision == "fp16":
-                models = [trinity, proj_layer]
+                models = [trinity, proj_layer, align_trinity]
                 cast_training_params(models, dtype=torch.float32)
 
             global_step = int(path_name.split("-")[-1])
@@ -884,11 +894,12 @@ def main(args):
     transformer.train()
     trinity.train()
     proj_layer.train()
+    align_trinity.train()
 
     for epoch in range(first_epoch, args.num_train_epochs):
         train_loss = 0.0
         for step, batch in enumerate(train_dataloader):
-            with accelerator.accumulate(transformer), accelerator.accumulate(trinity), accelerator.accumulate(proj_layer):
+            with accelerator.accumulate(transformer), accelerator.accumulate(trinity), accelerator.accumulate(align_trinity), accelerator.accumulate(proj_layer):
                 # encode prompts
                 prompts = batch["prompt_embeds"]
                 prompt_attention_mask = batch["attn_mask"]
@@ -896,22 +907,28 @@ def main(args):
 
                 # encode object images
                 object_prompt_embeds = []
-                # print(len(batch["object_prompt_embeds"][0]))
+                object_label_embeds = []
                 flag = 0
-                for _, item in enumerate(batch["object_prompt_embeds"]):
+                for _, (item, litem, aitem) in enumerate(zip(batch["object_prompt_embeds"], batch["object_label_embeds"], batch["label_attn_mask"])):
                     if len(item) > 0:
                         try:
-                            encoded_object = encode_object(item, img_encoders, img_tokenizers)
+                            encoded_object, lab_prompt_embeds = encode_object(item, litem, aitem, img_encoders, img_tokenizers, text_encoder)
+
                             tok_sz = encoded_object.shape[-2]//len(item)
+                            lab_tok_sz = lab_prompt_embeds.shape[-2]//len(item)
                             if len(item) == 2:
                                 encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
+                                lab_prompt_embeds = torch.cat((lab_prompt_embeds, lab_prompt_embeds[0,:lab_tok_sz,:].unsqueeze(0)), dim=-2)
                             elif len(item) == 1:
                                 encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0), encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
+                                lab_prompt_embeds = torch.cat((lab_prompt_embeds, lab_prompt_embeds[0,:lab_tok_sz,:].unsqueeze(0), lab_prompt_embeds[0,:lab_tok_sz,:].unsqueeze(0)), dim=-2)
                             else:
                                 pass
+
                             encoded_object = encoded_object.to(accelerator.device)
+                            lab_prompt_embeds = lab_prompt_embeds.to(accelerator.device)
                         except Exception as e:
-                            print("padding being done.")
+                            print("!!! PADDING being done !!!")
                             flag = 1
                     else:
                         print("Epsilon padding happening !!! L-1011")
@@ -919,33 +936,32 @@ def main(args):
                         flag = 1 
 
                     object_prompt_embeds.append(encoded_object)
+                    object_label_embeds.append(lab_prompt_embeds)
                 
                 if flag == 1:
                     print("FLAG is 1.. padding about to happen but stopped!!")
                     continue
                 
                 object_prompt_embeds = torch.stack(object_prompt_embeds).squeeze()
-
-                # get multimodal prompts
-                txt_tok_len = prompt_embeds.shape[-2]
-                img_tok_len = object_prompt_embeds.shape[-2]
+                object_label_embeds = torch.stack(object_label_embeds).squeeze()
 
                 # normalize everything
                 object_prompt_embeds = object_prompt_embeds/torch.norm(object_prompt_embeds, p=2, dim=-1, keepdim=True)
                 prompt_embeds = prompt_embeds/torch.norm(prompt_embeds, p=2, dim=-1, keepdim=True)
+                object_label_embeds = object_label_embeds/torch.norm(object_label_embeds, p=2, dim=-1, keepdim=True)
                 
-                with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
-                    object_prompt_embeds = proj_layer(object_prompt_embeds)
-                prompt_embeds = multimodal_encode_prompt(prompt_embeds, object_prompt_embeds)
+                # project it to text space
+                object_prompt_embeds = proj_layer(object_prompt_embeds)
+
+                # align object images and labels
+                object_embeds = align_trinity(object_label_embeds, object_prompt_embeds, 0, 0, typ=args.mask_typ)
+                object_embeds = object_embeds/torch.norm(object_embeds, p=2, dim=-1, keepdim=True)
+                
                 prompt_embeds = prompt_embeds.to(accelerator.device, dtype=weight_dtype)
-                
-                # pad attention mask to match the concatenated prompt size
-                pad_size = prompt_embeds.shape[1] - max_length
-                prompt_attention_mask = F.pad(batch["attn_mask"], (0, pad_size), mode='constant', value=0).to(accelerator.device)
 
                 # get the trinity embeds
                 # with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
-                trinity_embeds = trinity(prompt_embeds, prompt_embeds, txt_tok_len, img_tok_len, typ=args.mask_typ)
+                trinity_embeds = trinity(prompt_embeds, object_embeds, 0, 0, typ=args.mask_typ)
                 trinity_embeds = trinity_embeds/torch.norm(trinity_embeds, p=2, dim=-1, keepdim=True)
                 
                 # Convert images to latent space
@@ -1038,7 +1054,7 @@ def main(args):
 
                 if global_step % args.checkpointing_steps == 0:
                     if accelerator.is_main_process:
-                        save_path = os.path.join(args.output_dir, f"pixart-checkpoint-{global_step}")
+                        save_path = os.path.join(args.output_dir, f"pixart-pl3-checkpoint-{global_step}")
                         accelerator.save_state(save_path)
 
                         unwrapped_transformer = accelerator.unwrap_model(transformer, keep_fp32_wrapper=True)
@@ -1059,8 +1075,10 @@ def main(args):
                         # save the rem 2 models
                         proj_layer_ = accelerator.unwrap_model(proj_layer)
                         trinity_ = accelerator.unwrap_model(trinity)
+                        align_trinity_ = accelerator.unwrap_model(align_trinity)
                         torch.save(proj_layer_.state_dict(), os.path.join(save_path, "proj_checkpoint"+".pt"))
                         torch.save(trinity_.state_dict(), os.path.join(save_path, "trinity_checkpoint"+".pt"))
+                        torch.save(align_trinity_.state_dict(), os.path.join(save_path, "altrinity_checkpoint"+".pt"))
 
                         logger.info(f"Saved state to {save_path}")
 

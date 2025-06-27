@@ -1169,7 +1169,7 @@ def main(args):
 
                 # Predict the noise residual
                 unet_added_conditions = {"time_ids": add_time_ids}
-                unet_added_conditions.update({"text_embeds": pooled_prompt_embeds})
+                # unet_added_conditions.update({"text_embeds": pooled_prompt_embeds})
                 model_pred = unet(
                     noisy_model_input,
                     timesteps,

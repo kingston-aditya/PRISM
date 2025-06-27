@@ -926,26 +926,21 @@ def main(args):
                 
                 object_prompt_embeds = torch.stack(object_prompt_embeds).squeeze()
 
-                # get multimodal prompts
-                txt_tok_len = prompt_embeds.shape[-2]
-                img_tok_len = object_prompt_embeds.shape[-2]
+                prompt_embeds = prompt_embeds.to(accelerator.device)
+                object_prompt_embeds = object_prompt_embeds.to(accelerator.device)
+                prompt_attention_mask = prompt_attention_mask.to(accelerator.device)
 
-                # normalize everything
+
+                # normalize everything 
                 object_prompt_embeds = object_prompt_embeds/torch.norm(object_prompt_embeds, p=2, dim=-1, keepdim=True)
                 prompt_embeds = prompt_embeds/torch.norm(prompt_embeds, p=2, dim=-1, keepdim=True)
                 
-                with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
-                    object_prompt_embeds = proj_layer(object_prompt_embeds)
-                prompt_embeds = multimodal_encode_prompt(prompt_embeds, object_prompt_embeds)
-                prompt_embeds = prompt_embeds.to(accelerator.device, dtype=weight_dtype)
-                
-                # pad attention mask to match the concatenated prompt size
-                pad_size = prompt_embeds.shape[1] - max_length
-                prompt_attention_mask = F.pad(batch["attn_mask"], (0, pad_size), mode='constant', value=0).to(accelerator.device)
+                # project it to text space
+                object_prompt_embeds = proj_layer(object_prompt_embeds)
 
                 # get the trinity embeds
                 # with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
-                trinity_embeds = trinity(prompt_embeds, prompt_embeds, txt_tok_len, img_tok_len, typ=args.mask_typ)
+                trinity_embeds = trinity(prompt_embeds, object_prompt_embeds, 0, 0, typ=args.mask_typ)
                 trinity_embeds = trinity_embeds/torch.norm(trinity_embeds, p=2, dim=-1, keepdim=True)
                 
                 # Convert images to latent space

@@ -94,11 +94,11 @@ class CrossAttention(nn.Module):
 class ProjectLayer(nn.Module):
     def __init__(self, embed_dim, hidden_dim):
         super(ProjectLayer, self).__init__()
-        dim_change = (hidden_dim - embed_dim)//2
+        main_hidden_dim = 128
         self.linear = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim-dim_change),
+            nn.Linear(hidden_dim, main_hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim-dim_change, embed_dim)
+            nn.Linear(main_hidden_dim, embed_dim)
         )
         self.norm = nn.LayerNorm(embed_dim)
 
@@ -148,9 +148,9 @@ class EncoderModel(nn.Module):
 
 # Example usage
 if __name__ == "__main__":
-    q = torch.randn(1, 848, 2048)
-    kv = torch.randn(1, 848, 2048)
+    q = torch.randn(1, 120, 2048)
+    kv = torch.randn(1, 728, 2048)
     
-    cross_attn = EncoderModel(dim_q=1280, dim_kv=1280, num_heads=8, num_blocks=8)
+    cross_attn = EncoderModel(dim_q=2048, dim_kv=2048, num_heads=8, num_blocks=8)
     output = cross_attn(q, kv, 0, 0, typ="causal")
     print(output.shape) 
