@@ -814,12 +814,12 @@ def main(args):
         num_training_steps=args.max_train_steps * accelerator.num_processes,
     )
 
+    # Prepare everything with our `accelerator`.
+    transformer, optimizer, train_dataloader, lr_scheduler, trinity, proj_layer = accelerator.prepare(transformer, optimizer, train_dataloader, lr_scheduler, trinity, proj_layer)
+
     # load trinity to cuda
     trinity.to(accelerator.device)
     proj_layer.to(accelerator.device)
-
-    # Prepare everything with our `accelerator`.
-    transformer, optimizer, train_dataloader, lr_scheduler, trinity, proj_layer = accelerator.prepare(transformer, optimizer, train_dataloader, lr_scheduler, trinity, proj_layer)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -847,7 +847,7 @@ def main(args):
 
     # resume from checkpoint
     if args.resume_from_checkpoint == "latest":
-        all_pths = glob.glob(os.path.join(args.output_dir, "pixart-checkpoint-*"))
+        all_pths = glob.glob(os.path.join(args.output_dir, "pixart-pl2-checkpoint-*"))
         if len(all_pths) != 0:
             path_name = sorted(all_pths, key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
             accelerator.print(f"Resuming from checkpoint {path_name}")
@@ -1033,7 +1033,7 @@ def main(args):
 
                 if global_step % args.checkpointing_steps == 0:
                     if accelerator.is_main_process:
-                        save_path = os.path.join(args.output_dir, f"pixart-checkpoint-{global_step}")
+                        save_path = os.path.join(args.output_dir, f"pixart-pl2-checkpoint-{global_step}")
                         accelerator.save_state(save_path)
 
                         unwrapped_transformer = accelerator.unwrap_model(transformer, keep_fp32_wrapper=True)
@@ -1052,10 +1052,8 @@ def main(args):
                         )
 
                         # save the rem 2 models
-                        proj_layer_ = accelerator.unwrap_model(proj_layer)
-                        trinity_ = accelerator.unwrap_model(trinity)
-                        torch.save(proj_layer_.state_dict(), os.path.join(save_path, "proj_checkpoint"+".pt"))
-                        torch.save(trinity_.state_dict(), os.path.join(save_path, "trinity_checkpoint"+".pt"))
+                        torch.save(proj_layer.state_dict(), os.path.join(save_path, "proj_checkpoint"+".pt"))
+                        torch.save(trinity.state_dict(), os.path.join(save_path, "trinity_checkpoint"+".pt"))
 
                         logger.info(f"Saved state to {save_path}")
 

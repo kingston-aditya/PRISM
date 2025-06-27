@@ -634,9 +634,6 @@ def main(args):
     # Step 1: get the object images - 
     # a) read the images and count - store all image embeds
     json_obj = read_eval_dataset(args)
-
-    # Load noise scheduler.
-    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler", torch_dtype=weight_dtype, cache_dir=args.cache_dir)
     
     # load text encoders
     text_tokenizer = T5Tokenizer.from_pretrained(args.pretrained_model_name_or_path, subfolder="tokenizer", revision=args.revision, torch_dtype=weight_dtype,cache_dir=args.cache_dir)
@@ -701,12 +698,17 @@ def main(args):
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
-    logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
-    logger.info(f"  Total optimization steps = {args.max_train_steps}")
+
+    # load trinity to cuda
+    trinity.to(accelerator.device)
+    proj_layer.to(accelerator.device)
+
+    # Prepare everything with our `accelerator`.
+    trinity, proj_layer = accelerator.prepare(trinity, proj_layer)
 
     # resume from checkpoint
     if args.resume_from_checkpoint == "latest":
-        all_pths = glob.glob(os.path.join(args.output_dir, "pixart-checkpoint-*"))
+        all_pths = glob.glob(os.path.join(args.output_dir, "pixart-pl2-checkpoint-*"))
         if len(all_pths) != 0:
             path_name = sorted(all_pths, key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
 
@@ -728,13 +730,6 @@ def main(args):
             raise RuntimeError("Checkpoint not available.")
     else:
         pass
-
-    # load trinity to cuda
-    trinity.to(accelerator.device)
-    proj_layer.to(accelerator.device)
-
-    # Prepare everything with our `accelerator`.
-    trinity, proj_layer = accelerator.prepare(trinity, proj_layer)
 
     # evaluation mode
     trinity.eval()
@@ -784,8 +779,6 @@ def main(args):
 
         if len(object_prompt_embeds.size()) == 2:
             object_prompt_embeds = object_prompt_embeds.unsqueeze(0)
-        if len(object_label_embeds.size()) == 2:
-            object_label_embeds = object_label_embeds.unsqueeze(0)
 
         # normalize everything
         object_prompt_embeds = object_prompt_embeds/torch.norm(object_prompt_embeds, p=2, dim=-1, keepdim=True)
