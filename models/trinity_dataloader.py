@@ -243,7 +243,11 @@ class PixartTrainDataset(Dataset):
                     else:
                         temp_img = obj_img
                     
-                    bbox_values.append(transform_obj(Image.fromarray(temp_img), self.args))
+                    try:
+                        bbox_values.append(transform_obj(Image.fromarray(temp_img), self.args))
+                    except:
+                        print("Something wrong with the bbox", self.temp["image"][idx])
+                        flag = 1
         
         elif len(bbox_info) == 0 or flag==1:
             # get the prompt tokens
