@@ -53,11 +53,11 @@ from PIL import Image
 import glob, json
 import pdb as pdb_original
 from pipeline1 import EncoderModel, ProjectLayer
-from trinity_dataloader import SDXLTrainDataset, SDXLInferDataset
+from trinity_dataloader import SD15TrainDataset, SDXLInferDataset
 import sys
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
-check_min_version("0.35.0.dev0")
+check_min_version("0.33.0.dev0")
 
 logger = get_logger(__name__, log_level="INFO")
 
@@ -542,9 +542,9 @@ def encode_object(batch, img_encoder, img_tokenizer):
         idx+=1
 
     # two image encoders - 257x1024 + 257x1664 = 257x2688
-    bt_size, tok_len, ebd_sz = image_embeds.size()
-    image_embeds = image_embeds.view(1,bt_size*tok_len,ebd_sz)
-    return image_embeds
+    bt_size, tok_len, ebd_sz = img_embeds.size()
+    img_embeds = img_embeds.view(1,bt_size*tok_len,ebd_sz)
+    return img_embeds
 
 # Encode text prompt - Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
 def encode_prompt(txt_toks_1, txt_toks_2, text_encoders):
@@ -640,11 +640,6 @@ def main(args):
     text_encoder.requires_grad_(False)
     image_encoder.requires_grad_(False)
 
-    unet.to(accelerator.device, dtype=weight_dtype)
-    vae.to(accelerator.device, dtype=weight_dtype)
-    text_encoder.to(accelerator.device, dtype=weight_dtype)
-    image_encoder.to(accelerator.device, dtype=weight_dtype)
-
     # For mixed precision training we cast all non-trainable weights (vae, non-lora text_encoder and non-lora unet) to half-precision
     # as these weights are only used for inference, keeping weights in full precision is not required.
     weight_dtype = torch.float32
@@ -652,6 +647,11 @@ def main(args):
         weight_dtype = torch.float16
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
+
+    unet.to(accelerator.device, dtype=weight_dtype)
+    vae.to(accelerator.device, dtype=weight_dtype)
+    text_encoder.to(accelerator.device, dtype=weight_dtype)
+    image_encoder.to(accelerator.device, dtype=weight_dtype)
 
     unet_lora_config = LoraConfig(
         r=args.rank,
@@ -661,8 +661,8 @@ def main(args):
     )
 
     # load the transformer
-    trinity = EncoderModel(2048, 2048, num_blocks=args.blocks)
-    proj_layer = ProjectLayer(2048, 2688)
+    trinity = EncoderModel(768, 768, num_blocks=args.blocks)
+    proj_layer = ProjectLayer(768, 1024)
 
     # requires grad is true
     trinity.requires_grad_(True)
@@ -670,6 +670,7 @@ def main(args):
 
     # Add adapter and make sure the trainable params are in float32.
     unet.add_adapter(unet_lora_config)
+
     if args.mixed_precision == "fp16":
         models = [unet]
         # only upcast trainable parameters (LoRA) into fp32
@@ -726,14 +727,12 @@ def main(args):
     # interpolation = getattr(transforms.InterpolationMode, args.image_interpolation_mode.upper(), None)
     def collate_fn(batch):
         pixel_values = [item["pixel_values"] for item in batch]
-        prompt_embeds_1 = torch.stack([item["prompt_embeds_1"] for item in batch])
-        prompt_embeds_2 = torch.stack([item["prompt_embeds_2"] for item in batch])
+        prompt_embeds = torch.stack([item["prompt_embeds"] for item in batch])
         object_prompt_embeds = [item["object_prompt_embeds"] for item in batch]
         filenames = [item["filenames"] for item in batch]
         return {
             "pixel_values": pixel_values,
-            "prompt_embeds_1": prompt_embeds_1,
-            "prompt_embeds_2": prompt_embeds_2,
+            "prompt_embeds": prompt_embeds,
             "object_prompt_embeds": object_prompt_embeds,
             "filenames": filenames
         }
@@ -743,7 +742,7 @@ def main(args):
 
     # DataLoaders creation.
     bgs = Image.open(os.path.join(args.bg_dir, np.random.choice(os.listdir(args.bg_dir))))
-    precomputed_dataset = SDXLTrainDataset(json_obj, args, bgs, tokenizer)
+    precomputed_dataset = SD15TrainDataset(json_obj, args, bgs, tokenizer)
     train_dataloader = torch.utils.data.DataLoader(
         precomputed_dataset,
         shuffle=False,
@@ -777,8 +776,8 @@ def main(args):
     )
 
     # Move unet, vae and text_encoder to device and cast to weight_dtype
-    trinity.to(accelerator.device, dtype=weight_dtype)
-    proj_layer.to(accelerator.device, dtype=weight_dtype)
+    trinity.to(accelerator.device)
+    proj_layer.to(accelerator.device)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -851,11 +850,15 @@ def main(args):
         disable=not accelerator.is_local_main_process,
     )
 
+    unet.train()
+    trinity.train()
+    proj_layer.train()
+
     for epoch in range(first_epoch, args.num_train_epochs):
-        unet.train()
         train_loss = 0.0
         for step, batch in enumerate(train_dataloader):
-            with accelerator.accumulate(unet):
+            with accelerator.accumulate(unet), accelerator.accumulate(trinity), accelerator.accumulate(proj_layer):
+                # transform the pixel values
                 batch["pixel_values"] = transform_image(batch["pixel_values"], args)
 
                 # Convert images to latent space
@@ -880,7 +883,7 @@ def main(args):
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
                 # Get the text embeddings for conditioning
-                prompt_embeds = text_encoder(batch["input_ids"], return_dict=False)[0]
+                prompt_embeds = text_encoder(batch["prompt_embeds"], return_dict=False)[0]
 
                 # Get the object embeddings for conditioning
                 object_prompt_embeds = []
@@ -919,7 +922,7 @@ def main(args):
                 # normalize everything 
                 object_prompt_embeds = object_prompt_embeds/torch.norm(object_prompt_embeds, p=2, dim=-1, keepdim=True)
                 prompt_embeds = prompt_embeds/torch.norm(prompt_embeds, p=2, dim=-1, keepdim=True)
-                
+
                 # project it to text space
                 object_prompt_embeds = proj_layer(object_prompt_embeds)
 
