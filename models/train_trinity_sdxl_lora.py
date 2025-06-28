@@ -253,7 +253,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--backup",
         type=str,
-        default="/nfshomes/asarkar6/aditya/PRISM/backup/",
+        default="/home/saividyaranya/PRISM/backup",
         help="The directory where the downloaded models and datasets will be stored.",
     )
     parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
@@ -616,6 +616,7 @@ def encode_prompt(txt_toks_1, txt_toks_2, text_encoders):
 
 def multimodal_encode_prompt(prompt_embeds, object_prompt_embeds):
     # concat them across dim 1
+    # import pdb; pdb.set_trace()
     cat_prompt_embeds = torch.cat((prompt_embeds, object_prompt_embeds), dim=-2)
     return cat_prompt_embeds
 

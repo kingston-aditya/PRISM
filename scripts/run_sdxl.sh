@@ -1,15 +1,14 @@
-accelerate launch --multi_gpu --main_process_port 29501 /nfshomes/asarkar6/aditya/PRISM/models/train_trinity_sdxl_lora.py \
+accelerate launch --multi_gpu /home/saividyaranya/PRISM/models/train_trinity_sdxl_lora.py \
   --pretrained_model_name_or_path="stabilityai/stable-diffusion-xl-base-1.0" \
   --pretrained_vae_model_name_or_path="madebyollin/sdxl-vae-fp16-fix" \
-  --dataset_name="/nfshomes/asarkar6/trinity/train_data/" \
-  --output_dir="/nfshomes/asarkar6/scratch/test_image/" \
-  --cache_dir="/nfshomes/asarkar6/trinity/model_weights/" \
-  --bg_dir="/nfshomes/asarkar6/aditya/PRISM/backgrounds/" \
-  --backup="/nfshomes/asarkar6/aditya/PRISM/backup/" \
+  --dataset_name="/data/home/saividyaranya/PRISM/cached_folder_real/images_again/" \
+  --output_dir="/data/home/saividyaranya/PRISM/real_output2_all_json3" \
+  --cache_dir="/data/home/saividyaranya/PRISM/model_weights3/" \
+  --bg_dir="/home/saividyaranya/PRISM/backgrounds/" \
   --resume_from_checkpoint="latest" \
   --wanna_bg=1 \
   --do_valid="True" \
-  --valid_path_name="/nfshomes/asarkar6/aditya/PRISM/validation/" \
+  --valid_path_name="/home/saividyaranya/PRISM/validation/" \
   --caption_column="prompt" \
   --object_column="object" \
   --mask_typ="no_mask" \
@@ -23,4 +22,5 @@ accelerate launch --multi_gpu --main_process_port 29501 /nfshomes/asarkar6/adity
   --use_8bit_adam \
   --num_train_epochs=40 \
   --checkpointing_steps=100 \
-  --rank=16
+  --rank=16 \
+  --max_train_steps=12_000
