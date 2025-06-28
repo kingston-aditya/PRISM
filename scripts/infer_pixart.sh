@@ -8,6 +8,7 @@ accelerate launch --multi_gpu --main_process_port 29501 /nfshomes/asarkar6/adity
   --valid_path_name="/nfshomes/asarkar6/aditya/PRISM/validation/" \
   --resume_from_checkpoint="latest" \
   --wanna_bg=1 \
+  --output_img_dir="/nfshomes/asarkar6/aditya/gen_images/" \
   --caption_column="prompt" \
   --object_column="object" \
   --mask_typ="causal" \

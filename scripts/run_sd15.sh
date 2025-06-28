@@ -1,4 +1,4 @@
-accelerate launch --multi_gpu --main_process_port 29501 /nfshomes/asarkar6/aditya/PRISM/models/train_trinity_sd15_lora.py \
+accelerate launch --multi_gpu --main_process_port 29501 /nfshomes/asarkar6/aditya/PRISM/models/train_trinity_sd15_pl3.py \
   --pretrained_model_name_or_path="stable-diffusion-v1-5/stable-diffusion-v1-5" \
   --dataset_name="/nfshomes/asarkar6/trinity/train_data/" \
   --output_dir="/nfshomes/asarkar6/scratch/test_image/" \

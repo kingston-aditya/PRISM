@@ -564,7 +564,6 @@ class SD15InferDataset(Dataset):
     def __len__(self):
         return len(self.temp["prompt"])
 
-# TODO - remove some stuff
 class SD15TrainDataset_pl3(Dataset):
     def __init__(self, temp, args, bg, txt_tokenizer):
         # load dataset
@@ -647,6 +646,52 @@ class SD15TrainDataset_pl3(Dataset):
             "object_label_embeds": bbox_labels,
             "pixel_values": pixel_values,
             "filenames": os.path.join(self.args.dataset_name, self.temp["image"][idx])
+        }
+
+    def __len__(self):
+        return len(self.temp["prompt"])
+    
+
+class SD15InferDataset_pl3(Dataset):
+    def __init__(self, temp, args, txt_tokenizer):
+        # load dataset
+        self.temp = temp
+        self.args = args
+        self.txt_tokenizer = txt_tokenizer
+    
+    def __getitem__(self, idx):        
+        # get the image objects
+        bbox_values = []
+        bbox_labels = []
+        bbox_info = self.temp["object"][idx]
+        if len(bbox_info) > 0:
+            # get the prompt tokens
+            with torch.no_grad():
+                prompt_toks = self.txt_tokenizer(self.temp["prompt"][idx], max_length=self.txt_tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt")
+                prompt_toks = prompt_toks.input_ids
+
+            # process the bbox
+            for idx, item in enumerate(bbox_info):
+                # store the PIL images
+                img_mat = Image.open(os.path.join(self.args.valid_path_name, item["img_pth"])).convert("RGB")
+                img_mat = transform_obj(img_mat, self.args)
+
+                # store the labels
+                labs = "An image of " + str(item["labels"])
+                with torch.no_grad():
+                    labs_toks = self.txt_tokenizer(labs, max_length=self.txt_tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt")
+                
+                # appends the image matrix and label tokens
+                bbox_values.append(img_mat)
+                bbox_labels.append(labs_toks.input_ids)
+
+        elif len(bbox_info) == 0:
+            raise Exception("Give me an object")
+            
+        return {
+            "prompt_embeds": prompt_toks,
+            "object_prompt_embeds": bbox_values,
+            "object_label_embeds": bbox_labels,
         }
 
     def __len__(self):

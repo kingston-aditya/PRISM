@@ -112,6 +112,17 @@ def parse_args(input_args=None):
     )
 
     parser.add_argument(
+        "--output_img_dir",
+        type=str,
+        default="/nfshomes/asarkar6/aditya/gen_images/",
+        help=(
+            "The name of the Dataset (from the HuggingFace hub) to train on (could be your own, possibly private,"
+            " dataset). It can also be a path pointing to a local copy of a dataset in your filesystem,"
+            " or to a folder containing files that 🤗 Datasets can understand."
+        ),
+    )
+
+    parser.add_argument(
         "--wanna_bg",
         type=int,
         default=0,
@@ -534,31 +545,6 @@ def encode_object(batch, img_encoder, img_tokenizer):
     img_embeds = img_embeds.view(1,bt_size*tok_len,ebd_sz)
     return img_embeds
 
-# Encode text prompt - Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
-def encode_prompt(txt_toks_1, txt_toks_2, text_encoders):
-    prompt_embeds_list = []
-
-    for i, text_encoder in enumerate(text_encoders):
-        if i == 0:
-            prompt_embeds = text_encoder(
-                txt_toks_1.to(text_encoder.device), output_hidden_states=True, return_dict=False
-            )
-        else: 
-            prompt_embeds = text_encoder(
-                txt_toks_2.to(text_encoder.device), output_hidden_states=True, return_dict=False
-            )
-
-        # We are only ALWAYS interested in the pooled output of the final text encoder
-        pooled_prompt_embeds = prompt_embeds[0]
-        prompt_embeds = prompt_embeds[-1][-2]
-        bs_embed, seq_len, _ = prompt_embeds.shape
-        prompt_embeds = prompt_embeds.view(bs_embed, seq_len, -1)
-        prompt_embeds_list.append(prompt_embeds)
-
-    prompt_embeds = torch.concat(prompt_embeds_list, dim=-1)
-    pooled_prompt_embeds = pooled_prompt_embeds.view(bs_embed, -1)
-    return prompt_embeds, pooled_prompt_embeds
-
 def main(args):
     logging_dir = Path(args.output_dir, args.logging_dir)
 
@@ -639,23 +625,18 @@ def main(args):
     # Get the specified interpolation method from the args
     # interpolation = getattr(transforms.InterpolationMode, args.image_interpolation_mode.upper(), None)
     def collate_fn(batch):
-        pixel_values = [item["pixel_values"] for item in batch]
         prompt_embeds = torch.stack([item["prompt_embeds"] for item in batch])
         object_prompt_embeds = [item["object_prompt_embeds"] for item in batch]
-        filenames = [item["filenames"] for item in batch]
         return {
-            "pixel_values": pixel_values,
             "prompt_embeds": prompt_embeds,
             "object_prompt_embeds": object_prompt_embeds,
-            "filenames": filenames
         }
     
     # load the dataset
     json_obj = read_eval_dataset(args)
 
     # DataLoaders creation.
-    bgs = Image.open(os.path.join(args.bg_dir, np.random.choice(os.listdir(args.bg_dir))))
-    precomputed_dataset = SD15InferDataset(json_obj, args, bgs, tokenizer)
+    precomputed_dataset = SD15InferDataset(json_obj, args, tokenizer)
     train_dataloader = torch.utils.data.DataLoader(
         precomputed_dataset,
         shuffle=False,
@@ -663,14 +644,6 @@ def main(args):
         batch_size=args.train_batch_size,
         num_workers=args.dataloader_num_workers,
     )
-
-    # Prepare everything with our `accelerator`.
-    trinity, proj_layer = accelerator.prepare(trinity, proj_layer)
-
-    # Move unet, vae and text_encoder to device and cast to weight_dtype
-    trinity.to(accelerator.device)
-    proj_layer.to(accelerator.device)
-    pipeline.to(accelerator.device)
 
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
@@ -682,6 +655,13 @@ def main(args):
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
     global_step = 0
 
+    # load trinity to cuda
+    trinity.to(accelerator.device)
+    proj_layer.to(accelerator.device)
+
+    # Prepare everything with our `accelerator`.
+    trinity, proj_layer = accelerator.prepare(trinity, proj_layer)
+
     # resume from checkpoint
     if args.resume_from_checkpoint == "latest":
         all_pths = glob.glob(os.path.join(args.output_dir, "sd15-checkpoint-*"))
@@ -691,33 +671,27 @@ def main(args):
             input_dir = os.path.join(args.output_dir, path_name)
             
             # load the unet
-            pipeline = DiffusionPipeline.from_pretrained(args.pretrained_model_name_or_path, revision=args.revision, variant=args.variant, torch_dtype=weight_dtype,)
+            pipeline = DiffusionPipeline.from_pretrained(args.pretrained_model_name_or_path, revision=args.revision, variant=args.variant, torch_dtype=weight_dtype, cache_dir=args.cache_dir, safety_checker = None, requires_safety_checker = False)
             pipeline.load_lora_weights(os.path.join(args.output_dir, path_name))
+            pipeline = pipeline.to(accelerator.device)
+            pipeline.set_progress_bar_config(disable=True)
 
             # load the models and upcast it to float32
-            trinity.load_state_dict(torch.load(os.path.join(input_dir, "trinity_checkpoint"+".pt")))
-            proj_layer.load_state_dict(torch.load(os.path.join(input_dir, "proj_checkpoint"+".pt")))
+            trinity.load_state_dict(torch.load(os.path.join(input_dir, "trinity_checkpoint"+".pt"), weights_only=True))
+            proj_layer.load_state_dict(torch.load(os.path.join(input_dir, "proj_checkpoint"+".pt"), weights_only=True))
         else:
             raise RuntimeError("Checkpoint not available.")
         
         # epochs
         global_step = 0
 
-    # load trinity to cuda
-    trinity.to(accelerator.device)
-    proj_layer.to(accelerator.device)
-    pipeline.to(accelerator.device)
-
     trinity.eval()
     proj_layer.eval()
-    pipeline.eval()
+    # pipeline.eval()
 
     for step, batch in enumerate(tqdm(train_dataloader, desc="Inferring")):
-        # transform the pixel values
-        batch["pixel_values"] = transform_image(batch["pixel_values"], args)
-
         # Get the text embeddings for conditioning
-        prompt_embeds = text_encoder(batch["prompt_embeds"], return_dict=False)[0]
+        prompt_embeds = text_encoder(batch["prompt_embeds"].to(text_encoder.device), return_dict=False)[0]
 
         # Get the object embeddings for conditioning
         object_prompt_embeds = []
@@ -726,6 +700,7 @@ def main(args):
             if len(item) > 0:
                 try:
                     encoded_object = encode_object(item, image_encoder, image_tokenizer)
+                    
                     tok_sz = encoded_object.shape[-2]//len(item)
                     if len(item) == 2:
                         encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
@@ -733,9 +708,10 @@ def main(args):
                         encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0), encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
                     else:
                         pass
+                    
                     encoded_object = encoded_object.to(accelerator.device)
                 except Exception as e:
-                    print("padding being done.")
+                    print("!!! PADDING being done !!!")
                     flag = 1
             else:
                 print("Epsilon padding happening !!! L-1011")
@@ -743,20 +719,14 @@ def main(args):
                 flag = 1 
 
             object_prompt_embeds.append(encoded_object)
-        
+
         if flag == 1:
             print("FLAG is 1.. padding about to happen but stopped!!")
             continue
         
         object_prompt_embeds = torch.stack(object_prompt_embeds).squeeze()
 
-        if len(object_prompt_embeds.size()) == 2:
-            object_prompt_embeds = object_prompt_embeds.unsqueeze(0)
-
-        prompt_embeds = prompt_embeds.to(accelerator.device)
-        object_prompt_embeds = object_prompt_embeds.to(accelerator.device)
-
-        # normalize everything 
+        # normalize everything
         object_prompt_embeds = object_prompt_embeds/torch.norm(object_prompt_embeds, p=2, dim=-1, keepdim=True)
         prompt_embeds = prompt_embeds/torch.norm(prompt_embeds, p=2, dim=-1, keepdim=True)
 
@@ -779,11 +749,7 @@ def main(args):
         for p_idx, i_idx in product(range(prompt_embeds.shape[0]), range(args.num_validation_images)):
             idx = p_idx * args.num_validation_images + i_idx
             pdx = step * prompt_embeds.shape[0] + p_idx
-            images[idx].save(os.path.join(args.backup, f"prompt{pdx}_img{i_idx}.png"))
-
-    
-        if global_step >= args.max_train_steps:
-            break
+            images[idx].save(os.path.join(args.output_img_dir, f"prompt{pdx}_img{i_idx}.png"))
 
     accelerator.end_training()
 

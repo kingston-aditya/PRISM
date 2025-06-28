@@ -520,7 +520,7 @@ def read_Trinity_dataset():
     return json_obj
 
 # encode object prompt - Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
-def encode_object(batch, lab_batch, lab_atn_batch, img_encoder, img_tokenizer, text_encoder):
+def encode_object(batch, lab_batch, img_encoder, img_tokenizer, text_encoder):
     with torch.no_grad():
         try:
             # get object image embeddings
@@ -538,7 +538,7 @@ def encode_object(batch, lab_batch, lab_atn_batch, img_encoder, img_tokenizer, t
             raise Exception("padding being done at encoding objects.")
 
         # create the label text embeddings
-        lab_prompt_embeds = text_encoder(torch.cat(lab_batch).to(text_encoder.device), attention_mask=torch.cat(lab_atn_batch).to(text_encoder.device))[0]
+        lab_prompt_embeds = encode_prompt(torch.cat(lab_batch).to(text_encoder.device), text_encoder)
 
     # fix the image embeddings  
     # two image encoders - 257x1024 + 257x1664 = 257x2688
@@ -695,7 +695,7 @@ def main(args):
     else:
         optimizer_cls = torch.optim.AdamW
 
-    params_to_optimize = list(lora_layers) + list(trinity.parameters()) + + list(align_trinity.parameters()) + list(proj_layer.parameters())
+    params_to_optimize = list(lora_layers) + list(trinity.parameters()) + list(align_trinity.parameters()) + list(proj_layer.parameters())
     optimizer = optimizer_cls(
         params_to_optimize,
         lr=args.learning_rate,
@@ -712,8 +712,8 @@ def main(args):
     # Get the specified interpolation method from the args
     # interpolation = getattr(transforms.InterpolationMode, args.image_interpolation_mode.upper(), None)
     def collate_fn(batch):
-        pixel_values = torch.stack([item["pixel_values"] for item in batch])
-        prompt_embeds = torch.stack([item["prompt_embeds"] for item in batch]).squeeze()
+        pixel_values = [item["pixel_values"] for item in batch]
+        prompt_embeds = torch.stack([item["prompt_embeds"] for item in batch])
         object_prompt_embeds = [item["object_prompt_embeds"] for item in batch]
         filenames = [item["filenames"] for item in batch]
         object_label_embeds = [item["object_label_embeds"] for item in batch]
@@ -881,10 +881,10 @@ def main(args):
                 object_prompt_embeds = []
                 object_label_embeds = []
                 flag = 0
-                for _, (item, litem, aitem) in enumerate(zip(batch["object_prompt_embeds"], batch["object_label_embeds"], batch["label_attn_mask"])):
+                for _, (item, litem) in enumerate(zip(batch["object_prompt_embeds"], batch["object_label_embeds"])):
                     if len(item) > 0:
                         try:
-                            encoded_object, lab_prompt_embeds = encode_object(item, litem, aitem, image_encoder, image_tokenizer, text_encoder)
+                            encoded_object, lab_prompt_embeds = encode_object(item, litem, image_encoder, image_tokenizer, text_encoder)
                             
                             tok_sz = encoded_object.shape[-2]//len(item)
                             lab_tok_sz = lab_prompt_embeds.shape[-2]//len(item)
@@ -1013,9 +1013,12 @@ def main(args):
                         )
 
                         # save the rem 2 models
-                        torch.save(proj_layer.state_dict(), os.path.join(save_path, "proj_checkpoint"+".pt"))
-                        torch.save(trinity.state_dict(), os.path.join(save_path, "trinity_checkpoint"+".pt"))
-                        torch.save(align_trinity.state_dict(), os.path.join(save_path, "altrinity_checkpoint"+".pt"))
+                        proj_layer_ = accelerator.unwrap_model(proj_layer)
+                        trinity_ = accelerator.unwrap_model(trinity)
+                        align_trinity_ = accelerator.unwrap_model(align_trinity)
+                        torch.save(proj_layer_.state_dict(), os.path.join(save_path, "proj_checkpoint"+".pt"))
+                        torch.save(trinity_.state_dict(), os.path.join(save_path, "trinity_checkpoint"+".pt"))
+                        torch.save(align_trinity_.state_dict(), os.path.join(save_path, "altrinity_checkpoint"+".pt"))
 
                         logger.info(f"Saved state to {save_path}")
 

@@ -1,10 +1,11 @@
-accelerate launch --multi_gpu --main_process_port 29501 /nfshomes/asarkar6/aditya/PRISM/models/infer_trinity_sd15_lora.py \
+accelerate launch --multi_gpu --main_process_port 29501 /nfshomes/asarkar6/aditya/PRISM/models/infer_trinity_sd15_pl3.py \
   --pretrained_model_name_or_path="stable-diffusion-v1-5/stable-diffusion-v1-5" \
   --dataset_name="/nfshomes/asarkar6/trinity/train_data/" \
   --output_dir="/nfshomes/asarkar6/scratch/test_image/" \
   --cache_dir="/nfshomes/asarkar6/trinity/model_weights/" \
   --bg_dir="/nfshomes/asarkar6/aditya/PRISM/backgrounds/" \
   --backup="/nfshomes/asarkar6/aditya/PRISM/backup/" \
+  --output_img_dir="/nfshomes/asarkar6/aditya/gen_images/" \
   --resume_from_checkpoint="latest" \
   --wanna_bg=1 \
   --do_valid="True" \
