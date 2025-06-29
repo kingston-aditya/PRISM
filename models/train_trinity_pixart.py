@@ -542,13 +542,8 @@ def encode_object(batch, img_encoders, img_tokenizers):
                 img_embeds = img_embeds[-1][-2]
                 bs_embed, seq_len, _ = img_embeds.shape
                 img_embeds = img_embeds.view(bs_embed, seq_len, -1)
-            except Exception as e:
-                if idx == 0:
-                    img_embeds = torch.randn_like(torch.zeros([len(batch), 257, 1024])) * 1e-3
-                else:
-                    img_embeds = torch.randn_like(torch.zeros([len(batch), 257, 1664])) * 1e-3
-                bs_embed, seq_len, _ = img_embeds.shape
-                img_embeds = img_embeds.view(bs_embed, seq_len, -1)
+            except:
+                raise Exception("padding being done at encoding objects.")
 
             # We are only ALWAYS interested in the pooled output of the final text encoder
             idx+=1
@@ -814,12 +809,12 @@ def main(args):
         num_training_steps=args.max_train_steps * accelerator.num_processes,
     )
 
+    # Prepare everything with our `accelerator`.
+    transformer, optimizer, train_dataloader, lr_scheduler, trinity, proj_layer = accelerator.prepare(transformer, optimizer, train_dataloader, lr_scheduler, trinity, proj_layer)
+
     # load trinity to cuda
     trinity.to(accelerator.device)
     proj_layer.to(accelerator.device)
-
-    # Prepare everything with our `accelerator`.
-    transformer, optimizer, train_dataloader, lr_scheduler, trinity, proj_layer = accelerator.prepare(transformer, optimizer, train_dataloader, lr_scheduler, trinity, proj_layer)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -1024,7 +1019,7 @@ def main(args):
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
                     params_to_clip = lora_layers
-                    accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
+                    accelerator.clip_grad_norm_(params_to_optimize, args.max_grad_norm)
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
@@ -1057,10 +1052,10 @@ def main(args):
                         )
 
                         # save the rem 2 models
-                        proj_layer_ = accelerator.unwrap_model(proj_layer)
-                        trinity_ = accelerator.unwrap_model(trinity)
-                        torch.save(proj_layer_.state_dict(), os.path.join(save_path, "proj_checkpoint"+".pt"))
-                        torch.save(trinity_.state_dict(), os.path.join(save_path, "trinity_checkpoint"+".pt"))
+                        # proj_layer_ = accelerator.unwrap_model(proj_layer)
+                        # trinity_ = accelerator.unwrap_model(trinity)
+                        torch.save(proj_layer.state_dict(), os.path.join(save_path, "proj_checkpoint"+".pt"))
+                        torch.save(trinity.state_dict(), os.path.join(save_path, "trinity_checkpoint"+".pt"))
 
                         logger.info(f"Saved state to {save_path}")
 

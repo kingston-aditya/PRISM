@@ -631,8 +631,8 @@ def main(args):
     proj_layer = ProjectLayer(768, 1024)
 
     # requires grad is true
-    trinity.requires_grad_(False)
-    proj_layer.requires_grad_(False)
+    trinity.requires_grad_(True)
+    proj_layer.requires_grad_(True)
     align_trinity.requires_grad_(True)
 
     # Get the specified interpolation method from the args
@@ -670,6 +670,14 @@ def main(args):
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
     global_step = 0
 
+    # load trinity to cuda
+    trinity.to(accelerator.device)
+    proj_layer.to(accelerator.device)
+    align_trinity.to(accelerator.device)
+
+    # Prepare everything with our `accelerator`.
+    trinity, align_trinity, proj_layer = accelerator.prepare(trinity, align_trinity, proj_layer)
+
     # resume from checkpoint
     if args.resume_from_checkpoint == "latest":
         all_pths = glob.glob(os.path.join(args.output_dir, "sd15-pl3-checkpoint-*"))
@@ -693,14 +701,6 @@ def main(args):
         
         # epochs
         global_step = 0
-    
-    # Prepare everything with our `accelerator`.
-    trinity, align_trinity, proj_layer = accelerator.prepare(trinity, align_trinity, proj_layer)
-
-    # load trinity to cuda
-    trinity.to(accelerator.device)
-    proj_layer.to(accelerator.device)
-    align_trinity.to(accelerator.device)
 
     trinity.eval()
     proj_layer.eval()

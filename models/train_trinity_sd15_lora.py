@@ -546,31 +546,6 @@ def encode_object(batch, img_encoder, img_tokenizer):
     img_embeds = img_embeds.view(1,bt_size*tok_len,ebd_sz)
     return img_embeds
 
-# Encode text prompt - Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
-def encode_prompt(txt_toks_1, txt_toks_2, text_encoders):
-    prompt_embeds_list = []
-
-    for i, text_encoder in enumerate(text_encoders):
-        if i == 0:
-            prompt_embeds = text_encoder(
-                txt_toks_1.to(text_encoder.device), output_hidden_states=True, return_dict=False
-            )
-        else: 
-            prompt_embeds = text_encoder(
-                txt_toks_2.to(text_encoder.device), output_hidden_states=True, return_dict=False
-            )
-
-        # We are only ALWAYS interested in the pooled output of the final text encoder
-        pooled_prompt_embeds = prompt_embeds[0]
-        prompt_embeds = prompt_embeds[-1][-2]
-        bs_embed, seq_len, _ = prompt_embeds.shape
-        prompt_embeds = prompt_embeds.view(bs_embed, seq_len, -1)
-        prompt_embeds_list.append(prompt_embeds)
-
-    prompt_embeds = torch.concat(prompt_embeds_list, dim=-1)
-    pooled_prompt_embeds = pooled_prompt_embeds.view(bs_embed, -1)
-    return prompt_embeds, pooled_prompt_embeds
-
 def main(args):
     logging_dir = Path(args.output_dir, args.logging_dir)
 
@@ -1008,10 +983,10 @@ def main(args):
                         )
 
                         # save the rem 2 models
-                        proj_layer_ = accelerator.unwrap_model(proj_layer)
-                        trinity_ = accelerator.unwrap_model(trinity)
-                        torch.save(proj_layer_.state_dict(), os.path.join(save_path, "proj_checkpoint"+".pt"))
-                        torch.save(trinity_.state_dict(), os.path.join(save_path, "trinity_checkpoint"+".pt"))
+                        # proj_layer_ = accelerator.unwrap_model(proj_layer)
+                        # trinity_ = accelerator.unwrap_model(trinity)
+                        torch.save(proj_layer.state_dict(), os.path.join(save_path, "proj_checkpoint"+".pt"))
+                        torch.save(trinity.state_dict(), os.path.join(save_path, "trinity_checkpoint"+".pt"))
 
                         logger.info(f"Saved state to {save_path}")
 

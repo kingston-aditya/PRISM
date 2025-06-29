@@ -1,4 +1,4 @@
-accelerate launch --multi_gpu --main_process_port 29501 /nfshomes/asarkar6/aditya/PRISM/models/train_trinity_pixart_pl2.py \
+accelerate launch --multi_gpu --main_process_port 29501 /nfshomes/asarkar6/aditya/PRISM/models/train_trinity_pixart.py \
   --pretrained_model_name_or_path="PixArt-alpha/PixArt-XL-2-1024-MS" \
   --dataset_name="/nfshomes/asarkar6/trinity/train_data/" \
   --output_dir="/nfshomes/asarkar6/scratch/test_image/" \
@@ -12,7 +12,7 @@ accelerate launch --multi_gpu --main_process_port 29501 /nfshomes/asarkar6/adity
   --random_flip \
   --train_batch_size=2 \
   --num_train_epochs=40 \
-  --checkpointing_steps=500 \
+  --checkpointing_steps=100 \
   --learning_rate=1e-06 \
   --mixed_precision="fp16" \
   --lr_scheduler="cosine" \

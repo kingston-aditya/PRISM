@@ -542,13 +542,8 @@ def encode_object(batch, img_encoders, img_tokenizers):
                 img_embeds = img_embeds[-1][-2]
                 bs_embed, seq_len, _ = img_embeds.shape
                 img_embeds = img_embeds.view(bs_embed, seq_len, -1)
-            except Exception as e:
-                if idx == 0:
-                    img_embeds = torch.randn_like(torch.zeros([len(batch), 257, 1024])) * 1e-3
-                else:
-                    img_embeds = torch.randn_like(torch.zeros([len(batch), 257, 1664])) * 1e-3
-                bs_embed, seq_len, _ = img_embeds.shape
-                img_embeds = img_embeds.view(bs_embed, seq_len, -1)
+            except:
+                raise Exception("padding being done at encoding objects.")
 
             # We are only ALWAYS interested in the pooled output of the final text encoder
             idx+=1
@@ -857,6 +852,7 @@ def main(args):
             # load the trinity and proj layer
             trinity.load_state_dict(torch.load(os.path.join(os.path.join(args.output_dir, path_name), "trinity_checkpoint"+".pt"), weights_only=True))
             proj_layer.load_state_dict(torch.load(os.path.join(os.path.join(args.output_dir, path_name), "proj_checkpoint"+".pt"), weights_only=True))
+            
             if args.mixed_precision == "fp16":
                 models = [trinity, proj_layer]
                 cast_training_params(models, dtype=torch.float32)
@@ -1018,8 +1014,7 @@ def main(args):
                 # Backpropagate
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
-                    params_to_clip = lora_layers
-                    accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
+                    accelerator.clip_grad_norm_(params_to_optimize, args.max_grad_norm)
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()

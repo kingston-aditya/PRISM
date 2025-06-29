@@ -183,7 +183,7 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--output_img_dir",
+        "--output_image_dir",
         type=str,
         default="/nfshomes/asarkar6/aditya/gen_images/",
         help=(
@@ -697,6 +697,10 @@ def main(args):
     trinity = EncoderModel(4096, 4096, num_blocks=args.blocks)
     proj_layer = ProjectLayer(4096, 2688)
 
+    # requires grad is true
+    trinity.requires_grad_(False)
+    proj_layer.requires_grad_(False)
+
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
@@ -814,7 +818,7 @@ def main(args):
         for p_idx, i_idx in product(range(prompt_embeds.shape[0]), range(args.num_validation_images)):
             idx = p_idx * args.num_validation_images + i_idx
             pdx = step * prompt_embeds.shape[0] + p_idx
-            images[idx].save(os.path.join(args.output_img_dir, f"prompt{pdx}_img{i_idx}.png"))
+            images[idx].save(os.path.join(args.output_image_dir, f"prompt{pdx}_img{i_idx}.png"))
 
     accelerator.end_training()
 

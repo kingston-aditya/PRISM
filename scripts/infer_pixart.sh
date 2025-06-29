@@ -1,4 +1,4 @@
-accelerate launch --multi_gpu --main_process_port 29501 /nfshomes/asarkar6/aditya/PRISM/models/infer_trinity_pixart_pl2.py \
+accelerate launch --multi_gpu --main_process_port 29501 /nfshomes/asarkar6/aditya/PRISM/models/infer_trinity_pixart_pl3.py \
   --pretrained_model_name_or_path="PixArt-alpha/PixArt-XL-2-1024-MS" \
   --dataset_name="/nfshomes/asarkar6/aditya/PRISM/validation/" \
   --output_dir="/nfshomes/asarkar6/scratch/test_image/" \
@@ -8,7 +8,7 @@ accelerate launch --multi_gpu --main_process_port 29501 /nfshomes/asarkar6/adity
   --valid_path_name="/nfshomes/asarkar6/aditya/PRISM/validation/" \
   --resume_from_checkpoint="latest" \
   --wanna_bg=1 \
-  --output_img_dir="/nfshomes/asarkar6/aditya/gen_images/" \
+  --output_image_dir="/nfshomes/asarkar6/aditya/gen_images/" \
   --caption_column="prompt" \
   --object_column="object" \
   --mask_typ="causal" \

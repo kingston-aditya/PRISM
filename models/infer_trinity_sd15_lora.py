@@ -619,8 +619,8 @@ def main(args):
     proj_layer = ProjectLayer(768, 1024)
 
     # requires grad is true
-    trinity.requires_grad_(False)
-    proj_layer.requires_grad_(False)
+    trinity.requires_grad_(True)
+    proj_layer.requires_grad_(True)
 
     # Get the specified interpolation method from the args
     # interpolation = getattr(transforms.InterpolationMode, args.image_interpolation_mode.upper(), None)
@@ -645,6 +645,13 @@ def main(args):
         num_workers=args.dataloader_num_workers,
     )
 
+    # load trinity to cuda
+    trinity.to(accelerator.device)
+    proj_layer.to(accelerator.device)
+
+    # Prepare everything with our `accelerator`.
+    trinity, proj_layer = accelerator.prepare(trinity, proj_layer)
+
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
@@ -654,13 +661,6 @@ def main(args):
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
     global_step = 0
-
-    # load trinity to cuda
-    trinity.to(accelerator.device)
-    proj_layer.to(accelerator.device)
-
-    # Prepare everything with our `accelerator`.
-    trinity, proj_layer = accelerator.prepare(trinity, proj_layer)
 
     # resume from checkpoint
     if args.resume_from_checkpoint == "latest":
@@ -687,7 +687,6 @@ def main(args):
 
     trinity.eval()
     proj_layer.eval()
-    # pipeline.eval()
 
     for step, batch in enumerate(tqdm(train_dataloader, desc="Inferring")):
         # Get the text embeddings for conditioning
@@ -735,7 +734,7 @@ def main(args):
 
         # get the trinity embeds
         # with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
-        trinity_embeds = trinity(prompt_embeds, object_prompt_embeds, 0, 0, typ=args.mask_typ)
+        trinity_embeds = trinity(prompt_embeds, object_prompt_embeds.unsqueeze(0), 0, 0, typ=args.mask_typ)
         trinity_embeds = trinity_embeds/torch.norm(trinity_embeds, p=2, dim=-1, keepdim=True)
 
         if torch.isnan(trinity_embeds).any():

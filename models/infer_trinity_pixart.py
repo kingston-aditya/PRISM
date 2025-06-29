@@ -198,6 +198,18 @@ def parse_args():
             " must exist to provide the captions for the images. Ignored if `dataset_name` is specified."
         ),
     )
+
+    parser.add_argument(
+        "--output_image_dir",
+        type=str,
+        default=None,
+        help=(
+            "A folder containing the training data. Folder contents must follow the structure described in"
+            " https://huggingface.co/docs/datasets/image_dataset#imagefolder. In particular, a `metadata.jsonl` file"
+            " must exist to provide the captions for the images. Ignored if `dataset_name` is specified."
+        ),
+    )
+
     parser.add_argument(
         "--image_column", type=str, default="image", help="The column of the dataset containing an image."
     )
@@ -689,6 +701,13 @@ def main(args):
     trinity = EncoderModel(4096, 4096, num_blocks=args.blocks)
     proj_layer = ProjectLayer(4096, 2688)
 
+    # Prepare everything with our `accelerator`.
+    trinity, proj_layer = accelerator.prepare(trinity, proj_layer)
+
+    # load trinity to cuda
+    trinity.to(accelerator.device)
+    proj_layer.to(accelerator.device)
+
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
@@ -728,13 +747,6 @@ def main(args):
             raise RuntimeError("Checkpoint not available.")
     else:
         pass
-
-    # load trinity to cuda
-    trinity.to(accelerator.device)
-    proj_layer.to(accelerator.device)
-
-    # Prepare everything with our `accelerator`.
-    trinity, proj_layer = accelerator.prepare(trinity, proj_layer)
 
     # evaluation mode
     trinity.eval()
@@ -784,8 +796,6 @@ def main(args):
 
         if len(object_prompt_embeds.size()) == 2:
             object_prompt_embeds = object_prompt_embeds.unsqueeze(0)
-        if len(object_label_embeds.size()) == 2:
-            object_label_embeds = object_label_embeds.unsqueeze(0)
 
         # normalize everything
         object_prompt_embeds = object_prompt_embeds/torch.norm(object_prompt_embeds, p=2, dim=-1, keepdim=True)
@@ -817,7 +827,7 @@ def main(args):
         for p_idx, i_idx in product(range(prompt_embeds.shape[0]), range(args.num_validation_images)):
             idx = p_idx * args.num_validation_images + i_idx
             pdx = step * prompt_embeds.shape[0] + p_idx
-            images[idx].save(os.path.join(args.backup, f"prompt{pdx}_img{i_idx}.png"))
+            images[idx].save(os.path.join(args.output_image_dir, f"prompt{pdx}_img{i_idx}.png"))
 
     accelerator.end_training()
 
