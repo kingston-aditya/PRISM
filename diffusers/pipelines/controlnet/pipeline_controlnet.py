@@ -804,7 +804,7 @@ class StableDiffusionControlNetPipeline(
         dtype,
         do_classifier_free_guidance=False,
         guess_mode=False,
-    ):
+    ):  
         image = self.control_image_processor.preprocess(image, height=height, width=width).to(dtype=torch.float32)
         image_batch_size = image.shape[0]
 

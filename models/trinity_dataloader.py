@@ -512,7 +512,7 @@ class SD15TrainDataset(Dataset):
                             temp_img = obj_img
                     else:
                         temp_img = obj_img
-                    bbox_values.append(transform_obj(Image.fromarray(temp_img), self.args))
+                    bbox_values.append(Image.fromarray(temp_img))
 
         elif len(bbox_info) == 0 or flag==1:
             pixel_values = Image.open(os.path.join(self.args.backup, "temp_img.jpg")).convert("RGB")
@@ -532,7 +532,7 @@ class SD15TrainDataset(Dataset):
                 else:
                     temp_img = obj_img
                 temp_img = np.asarray(temp_img)
-                bbox_values.append(transform_obj(Image.fromarray(temp_img), self.args))
+                bbox_values.append(Image.fromarray(temp_img))
             
         return {
             "prompt_embeds": prompt_toks,
@@ -564,11 +564,11 @@ class SD15InferDataset(Dataset):
             # process the bbox
             for idx, item in enumerate(bbox_info):
                 img_mat = Image.open(os.path.join(self.args.valid_path_name, item["img_pth"])).convert("RGB")
-                img_mat = transform_obj(img_mat, self.args)
+                # img_mat = transform_obj(img_mat, self.args)
                 bbox_values.append(img_mat)
 
         elif len(bbox_info) == 0:
-            raise Exception("GIve me an object.")
+            raise Exception("Give me an object.")
             
         return {
             "prompt_embeds": prompt_toks,
