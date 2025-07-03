@@ -187,6 +187,15 @@ def parse_args():
         default=None,
         help="The config of the Dataset, leave as None if there's only one config.",
     )
+
+
+    parser.add_argument(
+        "--dataset_metadata_jsonl_path",
+        type=str,
+        default=None,
+        help="The metadata file of ds.",
+    )
+
     parser.add_argument(
         "--train_data_dir",
         type=str,
@@ -504,8 +513,8 @@ def read_Trinity_dataset():
     # read multiple files
     json_obj = {"image":[], "prompt":[], "object":[]}
 
-    for name in glob.glob("/nfshomes/asarkar6/trinity/train_data/*.jsonl"):
-        with open(os.path.join("/nfshomes/asarkar6/trinity/train_data/", name), "r") as f:
+    for name in glob.glob("/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again/*.jsonl"):
+        with open(os.path.join("/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again/", name), "r") as f:
             for line in f:
                 try:
                     temp = json.loads(line.strip())
@@ -639,7 +648,6 @@ def main(args):
     # Step 1: get the object images - 
     # a) read the images and count - store all image embeds
     json_obj = read_Trinity_dataset()
-
     # Load noise scheduler.
     noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler", torch_dtype=weight_dtype, cache_dir=args.cache_dir)
     
@@ -886,6 +894,7 @@ def main(args):
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(transformer), accelerator.accumulate(trinity), accelerator.accumulate(proj_layer):
                 # encode prompts
+                # import pdb; pdb.set_trace()
                 prompts = batch["prompt_embeds"]
                 prompt_attention_mask = batch["attn_mask"]
                 prompt_embeds = encode_prompt(prompts, prompt_attention_mask, text_encoder)
