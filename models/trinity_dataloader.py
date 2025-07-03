@@ -367,15 +367,16 @@ class PixartTrainDataset_pl3(Dataset):
                     else:
                         temp_img = obj_img
                     
+
+
                     try:
                         bbox_values.append(transform_obj(Image.fromarray(temp_img), self.args))
+                        temp_txt_out = self.txt_tokenizer(label, max_length=self.max_length, padding="max_length", truncation=True, return_tensors="pt")
+                        bbox_labels.append(temp_txt_out.input_ids)
+                        bbox_labels_attnmask.append(temp_txt_out.attention_mask)
                     except:
                         print("Something wrong with the bbox", self.temp["image"][idx])
-                        flag = 1
-
-                    temp_txt_out = self.txt_tokenizer(label, max_length=self.max_length, padding="max_length", truncation=True, return_tensors="pt")
-                    bbox_labels.append(temp_txt_out.input_ids)
-                    bbox_labels_attnmask.append(temp_txt_out.attention_mask)
+                        flag = 1git 
         
         elif len(bbox_info) == 0 or flag==1:
             # get the prompt tokens
@@ -624,9 +625,13 @@ class SD15TrainDataset_pl3(Dataset):
                     else:
                         temp_img = obj_img
                     
-                    bbox_values.append(transform_obj(Image.fromarray(temp_img), self.args))
-                    temp_txt_out = self.txt_tokenizer(label, max_length=self.txt_tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt")
-                    bbox_labels.append(temp_txt_out.input_ids)
+                    try:
+                        bbox_values.append(transform_obj(Image.fromarray(temp_img), self.args))
+                        temp_txt_out = self.txt_tokenizer(label, max_length=self.txt_tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt")
+                        bbox_labels.append(temp_txt_out.input_ids)
+                    except:
+                        print("Something wrong with the bbox", self.temp["image"][idx])
+                        flag = 1
         
         elif len(bbox_info) == 0 or flag==1:
             # get the prompt tokens
