@@ -97,7 +97,7 @@ class ProjectLayer(nn.Module):
         main_hidden_dim = 128
         self.linear = nn.Sequential(
             nn.Linear(hidden_dim, main_hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(main_hidden_dim, embed_dim)
         )
         self.norm = nn.LayerNorm(embed_dim)
@@ -112,7 +112,7 @@ class LinearLayer(nn.Module):
         super(LinearLayer, self).__init__()
         self.linear = nn.Sequential(
             nn.Linear(embed_dim, hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(hidden_dim, embed_dim)
         )
         self.norm = nn.LayerNorm(embed_dim)

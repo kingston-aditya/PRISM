@@ -39,6 +39,21 @@ from ..pipeline_utils import DiffusionPipeline, StableDiffusionMixin
 from .pipeline_output import StableDiffusionPipelineOutput
 from .safety_checker import StableDiffusionSafetyChecker
 
+import pdb as pdb_original
+import sys
+
+class ForkedPdb(pdb_original.Pdb):
+    """A Pdb subclass that may be used
+    from a forked multiprocessing child
+    """
+    def interaction(self, *args, **kwargs):
+        _stdin = sys.stdin
+        try:
+            sys.stdin = open('/dev/stdin')
+            pdb_original.Pdb.interaction(self, *args, **kwargs)
+        finally:
+            sys.stdin = _stdin
+
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -490,10 +505,11 @@ class StableDiffusionPipeline(
                 attention_mask = None
 
             negative_prompt_embeds = self.text_encoder(
-                uncond_input.input_ids.to(device),
+                uncond_input.input_ids[:,:77].to(device),
                 attention_mask=attention_mask,
             )
             negative_prompt_embeds = negative_prompt_embeds[0]
+            # negative_prompt_embeds = prompt_embeds
 
         if do_classifier_free_guidance:
             # duplicate unconditional embeddings for each generation per prompt, using mps friendly method
@@ -977,7 +993,13 @@ class StableDiffusionPipeline(
         # Here we concatenate the unconditional and text embeddings into a single batch
         # to avoid doing two forward passes
         if self.do_classifier_free_guidance:
-            prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
+            if prompt_embeds.shape[-2] == 77:
+                prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
+            else:
+                repeat_count = (prompt_embeds.shape[-2] + 77 - 1) // 77
+                negative_prompt_embeds = negative_prompt_embeds.repeat(1, repeat_count, 1)[:, :848, :]
+                prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
+            # prompt_embeds = torch.cat([prompt_embeds, prompt_embeds])
 
         if ip_adapter_image is not None or ip_adapter_image_embeds is not None:
             image_embeds = self.prepare_ip_adapter_image_embeds(
