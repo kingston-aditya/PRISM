@@ -997,7 +997,7 @@ class StableDiffusionPipeline(
                 prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
             else:
                 repeat_count = (prompt_embeds.shape[-2] + 77 - 1) // 77
-                negative_prompt_embeds = negative_prompt_embeds.repeat(1, repeat_count, 1)[:, :848, :]
+                negative_prompt_embeds = negative_prompt_embeds.repeat(1, repeat_count, 1)[:, :prompt_embeds.shape[-2], :]
                 prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
             # prompt_embeds = torch.cat([prompt_embeds, prompt_embeds])
 

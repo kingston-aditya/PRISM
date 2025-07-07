@@ -548,10 +548,7 @@ def encode_object(batch, img_encoder, img_tokenizer):
 
 def multimodal_encode_prompt(prompt_embeds, object_prompt_embeds):
     # concat them across dim 1
-    if len(object_prompt_embeds.size()) == 2:
-        cat_prompt_embeds = torch.cat((prompt_embeds, object_prompt_embeds.unsqueeze(0)), dim=-2)
-    else:
-        cat_prompt_embeds = torch.cat((prompt_embeds, object_prompt_embeds), dim=-2)
+    cat_prompt_embeds = torch.cat((prompt_embeds, object_prompt_embeds), dim=-2)
     return cat_prompt_embeds
 
 def main(args):
@@ -735,7 +732,11 @@ def main(args):
 
         # get the trinity embeds
         # with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
-        trinity_embeds = multimodal_encode_prompt(prompt_embeds, object_prompt_embeds)
+        if len(object_prompt_embeds.size()) == 2:
+            object_prompt_embeds = object_prompt_embeds.unsqueeze(0)
+        
+        tok_sz = object_prompt_embeds.shape[-2]//3
+        trinity_embeds = multimodal_encode_prompt(prompt_embeds, object_prompt_embeds[:, :tok_sz,:])
         trinity_embeds = trinity_embeds/torch.norm(trinity_embeds, p=2, dim=-1, keepdim=True)
 
         if torch.isnan(trinity_embeds).any():

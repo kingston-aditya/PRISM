@@ -890,6 +890,8 @@ def main(args):
                     continue
                 
                 object_prompt_embeds = torch.stack(object_prompt_embeds).squeeze()
+                tok_sz = object_prompt_embeds.shape[-2]//3
+                object_prompt_embeds = object_prompt_embeds[:,:tok_sz,:]
 
                 prompt_embeds = prompt_embeds.to(accelerator.device)
                 object_prompt_embeds = object_prompt_embeds.to(accelerator.device)
