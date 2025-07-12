@@ -924,7 +924,6 @@ def main(args):
                 
                 # project it to text space
                 object_prompt_embeds = proj_layer(object_prompt_embeds)
-
                 # align object images and labels
                 object_embeds = align_trinity(object_label_embeds, object_prompt_embeds, 0, 0, typ=args.mask_typ)
                 object_embeds = object_embeds/torch.norm(object_embeds, p=2, dim=-1, keepdim=True)
