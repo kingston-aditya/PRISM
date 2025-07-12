@@ -741,7 +741,7 @@ def main(args):
         for p_idx, i_idx in product(range(prompt_embeds.shape[0]), range(args.num_validation_images)):
             idx = p_idx * args.num_validation_images + i_idx
             pdx = step * prompt_embeds.shape[0] + p_idx
-            images[idx].save(os.path.join(args.output_img_dir, f"prompt{pdx}_img{i_idx}.png"))
+            images[idx].save(os.path.join('/home/saividyaranya/PRISM/all_output_logs/ctrl_infer_images', f"prompt{pdx}_img{i_idx}.png"))
     
     accelerator.end_training()
 

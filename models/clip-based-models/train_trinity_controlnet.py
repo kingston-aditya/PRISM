@@ -502,8 +502,8 @@ def read_Trinity_dataset(args):
     # read multiple files
     json_obj = {"image":[], "prompt":[], "object":[]}
 
-    for name in glob.glob(os.path.join(args.dataset_name, "*.jsonl")):
-        with open(os.path.join(args.dataset_name, name), "r") as f:
+    for name in glob.glob(os.path.join("/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again/*.jsonl")):
+        with open(os.path.join("/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again", name), "r") as f:
             for line in f:
                 try:
                     temp = json.loads(line.strip())
@@ -770,6 +770,7 @@ def main(args):
                 f"the expected length ({len_train_dataloader_after_sharding}) when the learning rate scheduler was created. "
                 f"This inconsistency may result in the learning rate scheduler not functioning properly."
             )
+    # import pdb; pdb.set_trace()
     # Afterwards we recalculate our number of training epochs
     args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
 
