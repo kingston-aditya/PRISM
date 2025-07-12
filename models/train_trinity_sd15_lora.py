@@ -838,6 +838,7 @@ def main(args):
 
                 # Convert images to latent space
                 latents = vae.encode(batch["pixel_values"].to(accelerator.device, dtype=weight_dtype)).latent_dist.sample()
+                ForkedPdb().set_trace()
                 latents = latents * vae.config.scaling_factor
 
                 # Sample noise that we'll add to the latents
@@ -924,8 +925,24 @@ def main(args):
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
-                # Predict the noise residual and compute loss
-                model_pred = unet(noisy_latents, timesteps, encoder_hidden_states, return_dict=False)[0]
+                # Ensure consistent R1 across all processes
+                if accelerator.is_main_process:
+                    R1_tensor = torch.tensor(np.random.randint(1, 10), device=accelerator.device)
+                else:
+                    R1_tensor = torch.tensor(0, device=accelerator.device)
+
+                # Synchronize across processes if distributed
+                if accelerator.distributed_type != "NO":
+                    torch.distributed.broadcast(R1_tensor, src=0)
+                
+                R1 = R1_tensor.item()
+
+                noise_obj2 = unet(noisy_latents, timesteps, prompt_embeds, return_dict=False)[0]
+                if R1 > 3:
+                    noise_obj1 = unet(noisy_latents, timesteps, encoder_hidden_states, return_dict=False)[0]
+                    model_pred = 0.3*(noise_obj1 - noise_obj2) + noise_obj2
+                else:
+                    model_pred = noise_obj2
 
                 if args.snr_gamma is None:
                     loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")

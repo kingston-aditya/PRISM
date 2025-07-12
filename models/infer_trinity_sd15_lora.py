@@ -34,6 +34,8 @@ from tqdm.auto import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer, CLIPImageProcessor, CLIPVisionModel
 from itertools import product
 
+import sys
+sys.path.insert(1, "/nfshomes/asarkar6/aditya/PRISM/")
 import diffusers
 from diffusers import DiffusionPipeline
 from diffusers.utils import check_min_version
@@ -734,7 +736,9 @@ def main(args):
 
         # get the trinity embeds
         # with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
-        trinity_embeds = trinity(prompt_embeds, object_prompt_embeds.unsqueeze(0), 0, 0, typ=args.mask_typ)
+        if len(object_prompt_embeds.size()) == 2:
+            object_prompt_embeds = object_prompt_embeds.unsqueeze(0)
+        trinity_embeds = trinity(prompt_embeds, object_prompt_embeds, 0, 0, typ=args.mask_typ)
         trinity_embeds = trinity_embeds/torch.norm(trinity_embeds, p=2, dim=-1, keepdim=True)
 
         if torch.isnan(trinity_embeds).any():
@@ -743,7 +747,7 @@ def main(args):
 
         # Predict the noise residual and compute loss
         # load the original Pixart alpha model
-        images = pipeline(prompt_embeds=trinity_embeds, num_inference_steps=50, num_images_per_prompt=args.num_validation_images).images
+        images = pipeline(prompt_embeds=trinity_embeds, text_embeds=prompt_embeds, num_inference_steps=50, num_images_per_prompt=args.num_validation_images).images
 
         for p_idx, i_idx in product(range(prompt_embeds.shape[0]), range(args.num_validation_images)):
             idx = p_idx * args.num_validation_images + i_idx

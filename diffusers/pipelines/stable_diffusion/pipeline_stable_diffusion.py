@@ -352,6 +352,7 @@ class StableDiffusionPipeline(
         do_classifier_free_guidance,
         negative_prompt=None,
         prompt_embeds: Optional[torch.Tensor] = None,
+        text_embeds: Optional[torch.Tensor] = None,
         negative_prompt_embeds: Optional[torch.Tensor] = None,
         lora_scale: Optional[float] = None,
         clip_skip: Optional[int] = None,
@@ -525,7 +526,15 @@ class StableDiffusionPipeline(
                 # Retrieve the original scale by scaling back the LoRA layers
                 unscale_lora_layers(self.text_encoder, lora_scale)
 
-        return prompt_embeds, negative_prompt_embeds
+        if text_embeds is not None:
+            text_embeds = text_embeds.to(dtype=prompt_embeds_dtype, device=device)
+
+            bs_embed, seq_len, _ = text_embeds.shape
+            # duplicate text embeddings for each generation per prompt, using mps friendly method
+            text_embeds = text_embeds.repeat(1, num_images_per_prompt, 1)
+            text_embeds = text_embeds.view(bs_embed * num_images_per_prompt, seq_len, -1)
+
+        return prompt_embeds, negative_prompt_embeds, text_embeds
 
     def encode_image(self, image, device, num_images_per_prompt, output_hidden_states=None):
         dtype = next(self.image_encoder.parameters()).dtype
@@ -808,6 +817,7 @@ class StableDiffusionPipeline(
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         latents: Optional[torch.Tensor] = None,
         prompt_embeds: Optional[torch.Tensor] = None,
+        text_embeds: Optional[torch.Tensor] = None,
         negative_prompt_embeds: Optional[torch.Tensor] = None,
         ip_adapter_image: Optional[PipelineImageInput] = None,
         ip_adapter_image_embeds: Optional[List[torch.Tensor]] = None,
@@ -977,13 +987,14 @@ class StableDiffusionPipeline(
             self.cross_attention_kwargs.get("scale", None) if self.cross_attention_kwargs is not None else None
         )
 
-        prompt_embeds, negative_prompt_embeds = self.encode_prompt(
+        prompt_embeds, negative_prompt_embeds, text_embeds = self.encode_prompt(
             prompt,
             device,
             num_images_per_prompt,
             self.do_classifier_free_guidance,
             negative_prompt,
             prompt_embeds=prompt_embeds,
+            text_embeds=text_embeds,
             negative_prompt_embeds=negative_prompt_embeds,
             lora_scale=lora_scale,
             clip_skip=self.clip_skip,
@@ -1000,6 +1011,12 @@ class StableDiffusionPipeline(
                 negative_prompt_embeds = negative_prompt_embeds.repeat(1, repeat_count, 1)[:, :prompt_embeds.shape[-2], :]
                 prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
             # prompt_embeds = torch.cat([prompt_embeds, prompt_embeds])
+
+        if text_embeds is not None:
+            if text_embeds.shape[-2] == 77:
+                text_embeds = torch.cat([negative_prompt_embeds, text_embeds])
+            else:
+                raise ValueError("text embeds cannot have a token length > 77!!")
 
         if ip_adapter_image is not None or ip_adapter_image_embeds is not None:
             image_embeds = self.prepare_ip_adapter_image_embeds(
@@ -1059,7 +1076,18 @@ class StableDiffusionPipeline(
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
                 # predict the noise residual
-                noise_pred = self.unet(
+                # ForkedPdb().set_trace()
+                noise_pred_2 = self.unet(
+                    latent_model_input,
+                    t,
+                    encoder_hidden_states=text_embeds,
+                    timestep_cond=timestep_cond,
+                    cross_attention_kwargs=self.cross_attention_kwargs,
+                    added_cond_kwargs=added_cond_kwargs,
+                    return_dict=False,
+                )[0]
+                
+                noise_pred_1 = self.unet(
                     latent_model_input,
                     t,
                     encoder_hidden_states=prompt_embeds,
@@ -1068,6 +1096,8 @@ class StableDiffusionPipeline(
                     added_cond_kwargs=added_cond_kwargs,
                     return_dict=False,
                 )[0]
+
+                noise_pred = 0.3*(noise_pred_1 - noise_pred_2) + noise_pred_2
 
                 # perform guidance
                 if self.do_classifier_free_guidance:
