@@ -33,7 +33,7 @@ from accelerate.utils import ProjectConfiguration, set_seed
 import logging
 
 import sys
-sys.path.insert(1, "/nfshomes/asarkar6/aditya/DreamEngine/src/diffusers/src/")
+sys.path.insert(1, "/home/saividyaranya/PRISM/src/diffusers/src")
 from diffusers.models.transformers.transformer_sd3 import (
     SD3Transformer2DModel,
     QwenVLSD3_DirectMap_Transformer2DModel as QwenVLSD3Transformer2DModel
@@ -58,12 +58,12 @@ login(token="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")
 
 # set CUDA_VISIBLE_DEVICES to 0
 # Constants
-MODEL_PATH = "/nfshomes/asarkar6/trinity/model_weights"
+MODEL_PATH = "/data/home/saividyaranya/PRISM/model_weights3/dream_engine/"
 QWEN_PATH = "Qwen/Qwen2-VL-2B-Instruct"
 SD3_PATH = "stabilityai/stable-diffusion-3.5-large"
-DreamEngine_CKPT_DIR= f"{MODEL_PATH}/DreamEngine-ObjectFusion" # https://huggingface.co/leonardPKU/DreamEngine-ObjectFusion
-dataset_path = "/nfshomes/asarkar6/aditya/PRISM/validation/"
-output_dir = "/nfshomes/asarkar6/aditya/gen_images/"
+DreamEngine_CKPT_DIR= f"{MODEL_PATH}" # https://huggingface.co/leonardPKU/DreamEngine-ObjectFusion
+dataset_path = "/data/home/saividyaranya/PRISM/validation/"
+output_dir = "/home/saividyaranya/PRISM/all_output_logs/dreamengine_images"
 
 logger = get_logger(__name__, log_level="INFO")
 
@@ -120,10 +120,11 @@ def generate_image(obj_images, obj_labels, text_prompt, pipeline, obj_transform)
 
     segments = []
     for idx, item in enumerate(obj_images[0]):
-        segments.append(["An image of "+obj_labels[0][idx]["label"], obj_transform(item)])
+        
+        segments.append(["An image of "+obj_labels[0][idx], obj_transform(item)])
 
     segments = tuple(segments)
-
+    ForkedPdb().set_trace()
     output = pipeline.cfg_predict(prompt=text_prompt[0], segments=segments, num_inference_steps=28, num_images_per_prompt=4,width=1024,height=1024, guidance_scale=3.5, max_sequence_length=334)
 
     return output
@@ -304,7 +305,7 @@ def main():
                 print(f"  - {key}")
         
         # Transfer the model to the specified device
-        print(f"Transferring the model to {device.upper()}...")
+        print(f"Transferring the model to {device}...")
         model.to(dtype=dtype).to(device)  # First change dtype, then device
         model.eval()  # Set the model to evaluation mode
 
@@ -362,9 +363,10 @@ def main():
     )
 
     for step, batch in enumerate(tqdm(eval_dataloader, desc="Inferring")):
-        ForkedPdb().set_trace()
+        
         images = generate_image(batch["object_prompt_embeds"], batch["object_labels"], batch["prompt_embeds"], pipeline, obj_transform)
         for idx, item in enumerate(images):
+            ForkedPdb().set_trace()
             item.save(os.path.join(output_dir, f"prompt{step}_img{idx}.png"))
 
 

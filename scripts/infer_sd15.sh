@@ -1,11 +1,11 @@
 accelerate launch --multi_gpu --main_process_port 29501 /data/home/saividyaranya/PRISM/models/infer_trinity_sd15_pl3.py \
   --pretrained_model_name_or_path="stable-diffusion-v1-5/stable-diffusion-v1-5" \
   --dataset_name="/data/home/saividyaranya/PRISM/cached_folder_real/images_again/" \
-  --output_dir="/home/saividyaranya/PRISM/all_output_logs/sdxl15" \
+  --output_dir="/home/saividyaranya/PRISM/all_output_logs/sdxl15_12_translayers" \
   --cache_dir="/data/home/saividyaranya/PRISM/model_weights/" \
   --bg_dir="/data/home/saividyaranya/PRISM/backgrounds" \
   --backup="/data/home/saividyaranya/PRISM/backup/" \
-  --output_img_dir="/home/saividyaranya/PRISM/all_output_logs/sdxl15_infer_images3" \
+  --output_img_dir="/home/saividyaranya/PRISM/all_output_logs/sdxl15_infer_images3_8layers" \
   --resume_from_checkpoint="latest" \
   --wanna_bg=1 \
   --do_valid="True" \
@@ -13,7 +13,7 @@ accelerate launch --multi_gpu --main_process_port 29501 /data/home/saividyaranya
   --caption_column="prompt" \
   --object_column="object" \
   --mask_typ="no_mask" \
-  --blocks=4 \
+  --blocks=8 \
   --mixed_precision="fp16" \
   --train_batch_size=2 \
   --snr_gamma=5.0 \

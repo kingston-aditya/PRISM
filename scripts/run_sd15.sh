@@ -1,7 +1,7 @@
- accelerate launch --config_file /home/saividyaranya/PRISM/accelerate_config.yaml  --multi_gpu  /data/home/saividyaranya/PRISM/models/train_trinity_sd15_pl3.py \
+ accelerate launch --config_file /home/saividyaranya/PRISM/accelerate_config.yaml  --multi_gpu   /data/home/saividyaranya/PRISM/models/train_trinity_sd15_pl3.py \
   --pretrained_model_name_or_path="stable-diffusion-v1-5/stable-diffusion-v1-5" \
   --dataset_name="/data/home/saividyaranya/PRISM/cached_folder_real/images_again/" \
-  --output_dir="/data/home/saividyaranya/PRISM/all_output_logs/sdxl15" \
+  --output_dir="/data/home/saividyaranya/PRISM/all_output_logs/sdxl15_12_translayers" \
   --cache_dir="/data/home/saividyaranya/PRISM/model_weights3/" \
   --bg_dir="/home/saividyaranya/PRISM/backgrounds/" \
   --backup="/home/saividyaranya/PRISM/backup/" \
@@ -11,7 +11,7 @@
   --caption_column="prompt" \
   --object_column="object" \
   --mask_typ="no_mask" \
-  --blocks=4 \
+  --blocks=8 \
   --mixed_precision="fp16" \
   --train_batch_size=2 \
   --snr_gamma=5.0 \
@@ -20,5 +20,5 @@
   --lr_warmup_steps=0 \
   --use_8bit_adam \
   --num_train_epochs=40 \
-  --checkpointing_steps=500 \
+  --checkpointing_steps=1000 \
   --rank=16
