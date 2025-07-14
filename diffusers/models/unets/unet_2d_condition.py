@@ -1323,3 +1323,71 @@ class UNet2DConditionModel(
             return (sample,)
 
         return UNet2DConditionOutput(sample=sample)
+    
+class LlamaRMSNorm(nn.Module):
+    def __init__(self, hidden_size, eps=1e-6):
+        """
+        LlamaRMSNorm is equivalent to T5LayerNorm
+        """
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.variance_epsilon = eps
+
+    def forward(self, hidden_states):
+        input_dtype = hidden_states.dtype
+        hidden_states = hidden_states.to(torch.float32)
+        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+        return self.weight * hidden_states.to(input_dtype)
+
+    def extra_repr(self):
+        return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
+
+
+class QwenVL_SD15_UNet2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
+    def __init__(self, qwenvl_model, sd_unet, trinity, mlp_dim=4096, lmm_output_layer_index=-1, do_lmm_post_norm=False):
+        super().__init__()
+
+        self.lmm = qwenvl_model
+        self.unet= sd_unet
+        self.lmm_output_layer_index = lmm_output_layer_index
+        self.do_lmm_post_norm = do_lmm_post_norm
+        self.trinity = trinity
+        self.norm_lmm_out = LlamaRMSNorm(self.lmm.config.hidden_size)
+
+        hidden_dim = self.unet.config.cross_attention_dim + (self.lmm.config.hidden_size - self.unet.config.cross_attention_dim)//2
+        self.linear = nn.Sequential(
+            nn.Linear(self.lmm.config.hidden_size, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, self.unet.config.cross_attention_dim)
+        )
+        self.max_length = 77
+
+    
+    def forward(self, lmm_input_ids, lmm_attention_mask, unet_time_step, unet_hidden_states, lmm_pixel_values=None, lmm_image_grid_thw=None):
+
+        # get last layer embeddings of Qwen 2.5
+        lmm_outputs_last_hidden_state = self.lmm(
+            input_ids=lmm_input_ids,
+            attention_mask=lmm_attention_mask,
+            pixel_values=lmm_pixel_values,
+            image_grid_thw=lmm_image_grid_thw,
+            output_hidden_states=True
+        )['hidden_states'][self.lmm_output_layer_index]
+
+        # Normalization before passing it to UNET
+        if self.do_lmm_post_norm:
+            lmm_outputs_last_hidden_state = self.norm_lmm_out(lmm_outputs_last_hidden_state)
+
+        # align layer
+        lmm_outputs_last_hidden_state = lmm_outputs_last_hidden_state[:, :self.max_length, :]
+        encoder_hidden_states_proj = self.trinity(lmm_outputs_last_hidden_state, lmm_outputs_last_hidden_state, 0, 0, typ="no_mask")
+        encoder_hidden_states_proj = self.linear(encoder_hidden_states_proj)
+
+        unet_model_pred = self.unet(
+                        sample=unet_hidden_states,
+                        encoder_hidden_states=encoder_hidden_states_proj,
+                        timestep = unet_time_step,
+                        return_dict=False,
+                    )[0]
+        return unet_model_pred

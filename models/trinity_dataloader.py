@@ -710,3 +710,78 @@ class SD15InferDataset_pl3(Dataset):
 
     def __len__(self):
         return len(self.temp["prompt"])
+    
+class SD15_Qwen2_TrainDataset(Dataset):
+    def __init__(self, temp, args, bg):
+        # load dataset
+        self.temp = temp
+        self.args = args
+        self.bg = bg
+    
+    def __getitem__(self, idx):
+        # get the pixel values
+        flag = 0
+        try:
+            img_mat = Image.open(os.path.join(self.args.dataset_name, self.temp["image"][idx])).convert("RGB")
+        except Exception as e:
+            flag = 1
+        
+        # get the image objects
+        bbox_values = []
+        bbox_info = self.temp["object"][idx]
+        if len(bbox_info) > 0 and flag==0:
+            # get the main image
+            pixel_values = img_mat
+
+            # get the prompt tokens
+            with torch.no_grad():
+                prompt_toks = self.temp["prompt"][idx]
+
+            # process the bbox
+            for idx, item in enumerate(bbox_info):
+                x_min = int(item["xmin"])
+                x_max = min(int(item["xmax"]), self.bg.size[1])
+                y_min = int(item["ymin"])
+                y_max = min(int(item["ymax"]), self.bg.size[0])
+
+                if (x_max-x_min)*(y_max-y_min)>0 and y_max>=y_min and x_max>=x_min:
+                    trans_y, trans_x = self.bg.size[0]//2 - (y_min+y_max)//2, self.bg.size[1]//2 - (x_min+x_max)//2
+                    obj_img = np.asarray(img_mat)[y_min:y_max, x_min:x_max]
+                    temp_img = np.asarray(self.bg)
+                    if self.args.wanna_bg == 1:
+                        try:
+                            temp_img[y_min + trans_y:y_max + trans_y, x_min+trans_x:x_max+trans_x] = obj_img
+                        except:
+                            temp_img = obj_img
+                    else:
+                        temp_img = obj_img
+                    bbox_values.append(Image.fromarray(temp_img))
+
+        elif len(bbox_info) == 0 or flag==1:
+            pixel_values = Image.open(os.path.join(self.args.backup, "temp_img.jpg")).convert("RGB")
+            # get the prompt tokens
+            with torch.no_grad():
+                prompt_toks = "A smiling woman with a pink umbrella stands in front of a \"WELCOME TO THE LAKE\" sign, with a serene lake and green trees in the background."
+
+            for i in range(3):
+                obj_img = Image.open(os.path.join(self.args.backup, "temp_obj_"+str(i)+".jpg"))
+                temp_img = self.bg
+                if self.args.wanna_bg == 1:
+                    try:
+                        temp_img.paste(obj_img, ((y_max-y_min)//2, (x_max-x_min)//2), mask=obj_img)
+                    except:
+                        temp_img = obj_img
+                else:
+                    temp_img = obj_img
+                temp_img = np.asarray(temp_img)
+                bbox_values.append(Image.fromarray(temp_img))
+            
+        return {
+            "prompts": prompt_toks,
+            "object_prompt_embeds": bbox_values,
+            "pixel_values": pixel_values,
+            "filenames": os.path.join(self.args.dataset_name, self.temp["image"][idx])
+        }
+
+    def __len__(self):
+        return len(self.temp["prompt"])

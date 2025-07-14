@@ -429,3 +429,5 @@ class SD3Transformer2DModel(
             return (output,)
 
         return Transformer2DModelOutput(sample=output)
+    
+

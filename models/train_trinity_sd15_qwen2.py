@@ -40,21 +40,24 @@ from peft import LoraConfig
 from peft.utils import get_peft_model_state_dict
 from torchvision import transforms
 from tqdm.auto import tqdm
-from transformers import CLIPTextModel, CLIPTokenizer, CLIPImageProcessor, CLIPVisionModel
+from transformers import Qwen2_5_VLForConditionalGeneration, AutoTokenizer, AutoProcessor
+from qwen_vl_utils import process_vision_info
 
+import sys
+sys.path.insert(1, "/nfshomes/asarkar6/aditya/PRISM/")
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, DiffusionPipeline, StableDiffusionPipeline, UNet2DConditionModel
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import cast_training_params, compute_snr
 from diffusers.utils import check_min_version, convert_state_dict_to_diffusers
 from diffusers.utils.torch_utils import is_compiled_module
+from diffusers.models.unets.unet_2d_condition import QwenVL_SD15_UNet2DModel
 from PIL import Image
 
 import glob, json
 import pdb as pdb_original
-from pipeline1 import EncoderModel, ProjectLayer
-from trinity_dataloader import SD15TrainDataset, SDXLInferDataset
-import sys
+from pipeline1 import EncoderModel
+from trinity_dataloader import SD15_Qwen2_TrainDataset
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.33.0.dev0")
@@ -88,6 +91,14 @@ def parse_args(input_args=None):
         default=None,
         help="Path to pretrained VAE model with better numerical stability. More details: https://github.com/huggingface/diffusers/pull/4038.",
     )
+
+    parser.add_argument(
+        "--pretrained_lmm_name",
+        type=str,
+        default="Qwen/Qwen2.5-VL-3B-Instruct",
+        help="Path to pretrained VAE model with better numerical stability.",
+    )
+    
     parser.add_argument(
         "--revision",
         type=str,
@@ -176,6 +187,13 @@ def parse_args(input_args=None):
         "--mask_typ",
         type=str,
         default="normal",
+        help="The column of the dataset containing a caption or a list of objects.",
+    )
+
+    parser.add_argument(
+        "--training_stage",
+        type=int,
+        default=1,
         help="The column of the dataset containing a caption or a list of objects.",
     )
 
@@ -519,33 +537,6 @@ def read_Trinity_dataset():
                     print(f"Failed to decode JSON for line: {line.strip()} with error: {e}")
     return json_obj
 
-# encode object prompt - Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
-def encode_object(batch, img_encoder, img_tokenizer):
-    # create the image embeddings
-    with torch.no_grad():
-        idx = 0
-        try:
-            img_inputs = img_tokenizer(
-                images = batch,
-                return_tensors="pt",
-            )
-            img_inputs = img_inputs.to(img_encoder.device)
-            img_embeds = img_encoder(**img_inputs, output_hidden_states=True, return_dict=False,)
-
-            img_embeds = img_embeds[-1][-2]
-            bs_embed, seq_len, _ = img_embeds.shape
-            img_embeds = img_embeds.view(bs_embed, seq_len, -1)
-        except:
-            raise Exception("padding being done at encoding objects.")
-
-        # We are only ALWAYS interested in the pooled output of the final text encoder
-        idx+=1
-
-    # two image encoders - 257x1024 + 257x1664 = 257x2688
-    bt_size, tok_len, ebd_sz = img_embeds.size()
-    img_embeds = img_embeds.view(1,bt_size*tok_len,ebd_sz)
-    return img_embeds
-
 def main(args):
     logging_dir = Path(args.output_dir, args.logging_dir)
 
@@ -591,30 +582,7 @@ def main(args):
             repo_id = create_repo(
                 repo_id=args.hub_model_id or Path(args.output_dir).name, exist_ok=True, token=args.hub_token
             ).repo_id
-            
-    # Load scheduler
-    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler", cache_dir=args.cache_dir)
-
-    # Load the tokenizer and text encoder
-    tokenizer = CLIPTokenizer.from_pretrained(args.pretrained_model_name_or_path, subfolder="tokenizer", revision=args.revision)
-    text_encoder = CLIPTextModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision, cache_dir=args.cache_dir)
-
-    # Load the Image tokenizer and Image encoder
-    image_tokenizer = CLIPImageProcessor.from_pretrained("openai/clip-vit-large-patch14", cache_dir=args.cache_dir)
-    image_encoder = CLIPVisionModel.from_pretrained("openai/clip-vit-large-patch14", cache_dir=args.cache_dir)
-
-    # Load the Autoencoder
-    vae = AutoencoderKL.from_pretrained(args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision, variant=args.variant, cache_dir=args.cache_dir)
-
-    # Load the UNET
-    unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision, variant=args.variant, cache_dir=args.cache_dir)
     
-    # freeze parameters of models to save more memory
-    unet.requires_grad_(False)
-    vae.requires_grad_(False)
-    text_encoder.requires_grad_(False)
-    image_encoder.requires_grad_(False)
-
     # For mixed precision training we cast all non-trainable weights (vae, non-lora text_encoder and non-lora unet) to half-precision
     # as these weights are only used for inference, keeping weights in full precision is not required.
     weight_dtype = torch.float32
@@ -623,11 +591,41 @@ def main(args):
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
 
+    # Load the UNET
+    unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision, variant=args.variant, cache_dir=args.cache_dir)
     unet.to(accelerator.device, dtype=weight_dtype)
-    vae.to(accelerator.device, dtype=weight_dtype)
-    text_encoder.to(accelerator.device, dtype=weight_dtype)
-    image_encoder.to(accelerator.device, dtype=weight_dtype)
 
+    # Load the Qwen Model
+    qwen25 = Qwen2_5_VLForConditionalGeneration.from_pretrained(args.pretrained_lmm_name, ignore_mismatched_sizes=True, cache_dir=args.cache_dir)
+    qwen25.to(accelerator.device, dtype=weight_dtype)
+
+    # Load the trinity
+    trinity = EncoderModel(qwen25.config.hidden_size, qwen25.config.hidden_size, num_blocks=args.blocks)
+    trinity.to(accelerator.device, dtype=weight_dtype)
+
+    # freeze parameters of models to save more memory
+    unet.requires_grad_(False)
+    qwen25.requires_grad_(False)
+    trinity.requires_grad_(False)
+
+    # Load the transformer
+    transformer = QwenVL_SD15_UNet2DModel(qwen25, unet, trinity)
+    transformer.requires_grad_(False)
+    del unet, qwen25, trinity
+    transformer.to(accelerator.device, dtype=torch.float32)
+
+    # Load scheduler
+    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler", cache_dir=args.cache_dir)
+
+    # Load the Autoencoder
+    vae = AutoencoderKL.from_pretrained(args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision, variant=args.variant, cache_dir=args.cache_dir)
+    vae.to(accelerator.device, dtype=weight_dtype)
+    vae.requires_grad_(False)
+
+    # Load the qwen 2.5 autoprocessor
+    processor = AutoProcessor.from_pretrained(args.pretrained_lmm_name, max_pixels = 512*28*28)
+
+    # get the Lora Modules
     unet_lora_config = LoraConfig(
         r=args.rank,
         lora_alpha=args.rank,
@@ -635,31 +633,24 @@ def main(args):
         target_modules=["to_k", "to_q", "to_v", "to_out.0"],
     )
 
-    # load the transformer
-    trinity = EncoderModel(768, 768, num_blocks=args.blocks)
-    proj_layer = ProjectLayer(768, 1024)
-
-    # requires grad is true
-    trinity.requires_grad_(True)
-    proj_layer.requires_grad_(True)
-
     # Add adapter and make sure the trainable params are in float32.
-    unet.add_adapter(unet_lora_config)
+    transformer.unet.add_adapter(unet_lora_config)
 
     if args.mixed_precision == "fp16":
-        models = [unet]
+        models = [transformer.unet, transformer.trinity, transformer.linear]
         # only upcast trainable parameters (LoRA) into fp32
-        cast_training_params(models, dtype=torch.float32)
+        # cast_training_params(models, dtype=torch.float32)
 
-        for m in [trinity, proj_layer]:
+        for m in models:
             for param in m.parameters():
                 if param.requires_grad:
                     param.data = param.to(dtype=torch.float32)
 
-    lora_layers = filter(lambda p: p.requires_grad, unet.parameters())
+
+    lora_layers = filter(lambda p: p.requires_grad, transformer.unet.parameters())
 
     if args.gradient_checkpointing:
-        unet.enable_gradient_checkpointing()
+        transformer.unet.enable_gradient_checkpointing()
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
@@ -684,7 +675,9 @@ def main(args):
     else:
         optimizer_cls = torch.optim.AdamW
 
-    params_to_optimize = list(lora_layers) + list(trinity.parameters()) + list(proj_layer.parameters())
+    list_lora_layers = list(lora_layers)
+    params_to_optimize = list(transformer.trinity.parameters()) + list(transformer.linear.parameters())
+    
     optimizer = optimizer_cls(
         params_to_optimize,
         lr=args.learning_rate,
@@ -702,12 +695,12 @@ def main(args):
     # interpolation = getattr(transforms.InterpolationMode, args.image_interpolation_mode.upper(), None)
     def collate_fn(batch):
         pixel_values = [item["pixel_values"] for item in batch]
-        prompt_embeds = torch.stack([item["prompt_embeds"] for item in batch])
+        prompts = [item["prompts"] for item in batch]
         object_prompt_embeds = [item["object_prompt_embeds"] for item in batch]
         filenames = [item["filenames"] for item in batch]
         return {
             "pixel_values": pixel_values,
-            "prompt_embeds": prompt_embeds,
+            "prompts": prompts,
             "object_prompt_embeds": object_prompt_embeds,
             "filenames": filenames
         }
@@ -717,7 +710,8 @@ def main(args):
 
     # DataLoaders creation.
     bgs = Image.open(os.path.join(args.bg_dir, np.random.choice(os.listdir(args.bg_dir))))
-    precomputed_dataset = SD15TrainDataset(json_obj, args, bgs, tokenizer)
+    # change dataloader
+    precomputed_dataset = SD15_Qwen2_TrainDataset(json_obj, args, bgs)
     train_dataloader = torch.utils.data.DataLoader(
         precomputed_dataset,
         shuffle=False,
@@ -745,14 +739,13 @@ def main(args):
         num_training_steps=num_training_steps_for_scheduler,
     )
 
-    # Prepare everything with our `accelerator`.
-    unet, optimizer, train_dataloader, lr_scheduler, trinity, proj_layer = accelerator.prepare(
-        unet, optimizer, train_dataloader, lr_scheduler, trinity, proj_layer
-    )
+    transformer.trinity.requires_grad_(True)
+    transformer.linear.requires_grad_(True)
 
-    # Move unet, vae and text_encoder to device and cast to weight_dtype
-    trinity.to(accelerator.device)
-    proj_layer.to(accelerator.device)
+    # Prepare everything with our `accelerator`.
+    transformer, train_dataloader, lr_scheduler = accelerator.prepare(
+        transformer, train_dataloader, lr_scheduler
+    )
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -775,7 +768,7 @@ def main(args):
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
-    logger.info("***** Running training *****")
+    logger.info("***** Running training stage " + str(args.training_stage) + "*****")
     logger.info(f"  Num examples = {len(precomputed_dataset)}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
@@ -787,23 +780,18 @@ def main(args):
 
     # resume from checkpoint
     if args.resume_from_checkpoint == "latest":
-        all_pths = glob.glob(os.path.join(args.output_dir, "sd15-checkpoint-*"))
-        if len(all_pths) != 0:
-            path_name = sorted(all_pths, key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
+        all_pths_2 = glob.glob(os.path.join(args.output_dir, "sd15-qwen25-checkpoint-st2-*"))
+        all_pths = glob.glob(os.path.join(args.output_dir, "sd15-qwen25-checkpoint-*"))
+
+        final_pth = all_pths_2 if len(all_pths_2) != 0 else all_pths
+
+        if len(final_pth) != 0:
+            path_name = sorted(final_pth, key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
             accelerator.print(f"Resuming from checkpoint {path_name}")
             input_dir = os.path.join(args.output_dir, path_name)
             
             # load the unet
             accelerator.load_state(input_dir)
-
-            # load the models and upcast it to float32
-            trinity.load_state_dict(torch.load(os.path.join(input_dir, "trinity_checkpoint"+".pt")))
-            proj_layer.load_state_dict(torch.load(os.path.join(input_dir, "proj_checkpoint"+".pt")))
-            for m in [trinity, proj_layer]:
-                for param in m.parameters():
-                    if param.requires_grad:
-                        param.data = param.to(dtype=torch.float32)
-
 
             global_step = int(path_name.split("-")[-1])
             initial_global_step = global_step
@@ -817,6 +805,23 @@ def main(args):
         first_epoch = 0
         global_step = 0
 
+    # load a new optimizer for 2nd training stage
+    if args.training_stage == 2:
+        params_to_optimize = list_lora_layers + params_to_optimize
+        
+        optimizer = optimizer_cls(
+            params_to_optimize,
+            lr=args.learning_rate,
+            betas=(args.adam_beta1, args.adam_beta2),
+            weight_decay=args.adam_weight_decay,
+            eps=args.adam_epsilon,
+        )
+
+        optimizer = accelerator.prepare(optimizer)
+
+        initial_global_step = 0
+        first_epoch = 0
+
     progress_bar = tqdm(
         range(0, args.max_train_steps),
         initial=initial_global_step,
@@ -825,14 +830,12 @@ def main(args):
         disable=not accelerator.is_local_main_process,
     )
 
-    unet.train()
-    trinity.train()
-    proj_layer.train()
+    transformer.train()
 
     for epoch in range(first_epoch, args.num_train_epochs):
         train_loss = 0.0
         for step, batch in enumerate(train_dataloader):
-            with accelerator.accumulate(unet), accelerator.accumulate(trinity), accelerator.accumulate(proj_layer):
+            with accelerator.accumulate(transformer):
                 # transform the pixel values
                 batch["pixel_values"] = transform_image(batch["pixel_values"], args)
 
@@ -849,6 +852,7 @@ def main(args):
                     )
 
                 bsz = latents.shape[0]
+
                 # Sample a random timestep for each image
                 timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device)
                 timesteps = timesteps.long()
@@ -857,60 +861,83 @@ def main(args):
                 # (this is the forward diffusion process)
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-                # Get the text embeddings for conditioning
-                prompt_embeds = text_encoder(batch["prompt_embeds"], return_dict=False)[0]
-
-                # Get the object embeddings for conditioning
-                object_prompt_embeds = []
-                flag = 0
-                for _, item in enumerate(batch["object_prompt_embeds"]):
-                    if len(item) > 0:
-                        try:
-                            encoded_object = encode_object(item, image_encoder, image_tokenizer)
-                            tok_sz = encoded_object.shape[-2]//len(item)
-                            if len(item) == 2:
-                                encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
-                            elif len(item) == 1:
-                                encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0), encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
-                            else:
-                                pass
-                            encoded_object = encoded_object.to(accelerator.device)
-                        except Exception as e:
-                            print("padding being done.")
-                            flag = 1
+                # get the inputs for each model
+                if args.training_stage == 1:
+                    # Ensure consistent R1 across all processes
+                    if accelerator.is_main_process:
+                        R1_tensor = torch.tensor(np.random.randint(1, 3), device=accelerator.device)
                     else:
-                        print("Epsilon padding happening !!! L-1011")
-                        encoded_object = []
-                        flag = 1 
+                        R1_tensor = torch.tensor(1, device=accelerator.device)
 
-                    object_prompt_embeds.append(encoded_object)
-                
-                if flag == 1:
-                    print("FLAG is 1.. padding about to happen but stopped!!")
-                    continue
-                
-                object_prompt_embeds = torch.stack(object_prompt_embeds).squeeze()
+                    # Synchronize across processes if distributed
+                    if accelerator.distributed_type != "NO":
+                        torch.distributed.broadcast(R1_tensor, src=0)
+                    
+                    R1 = R1_tensor.item()
 
-                prompt_embeds = prompt_embeds.to(accelerator.device)
-                object_prompt_embeds = object_prompt_embeds.to(accelerator.device)
+                    # prompt only as input
+                    if R1 == 1:
+                        text = ["Describe an image in detail with prompt: " + prompt for prompt in batch["prompts"]]
 
-                # normalize everything 
-                object_prompt_embeds = object_prompt_embeds/torch.norm(object_prompt_embeds, p=2, dim=-1, keepdim=True)
-                prompt_embeds = prompt_embeds/torch.norm(prompt_embeds, p=2, dim=-1, keepdim=True)
+                        # load the processor
+                        inputs = processor(
+                            text=text,
+                            padding="longest",
+                            return_tensors="pt",
+                        )
 
-                # project it to text space
-                object_prompt_embeds = proj_layer(object_prompt_embeds)
+                    elif R1 == 2:
+                        messages = [
+                            [{
+                            "role": "user",
+                            "content":[
+                                {
+                                    "type": "image",
+                                    "image": img
+                                } for img in img_list] + [{"type": "text", "text": "Explain an image in detail with above objects."}]
+                            }] for img_list in batch["object_prompt_embeds"]
+                        ]
 
-                # get the trinity embeds
-                # with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
-                trinity_embeds = trinity(prompt_embeds, object_prompt_embeds, 0, 0, typ=args.mask_typ)
-                trinity_embeds = trinity_embeds/torch.norm(trinity_embeds, p=2, dim=-1, keepdim=True)
+                        texts = [processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) for msg in messages]
+                        image_inputs, video_inputs = process_vision_info(messages)
 
-                if torch.isnan(trinity_embeds).any():
-                    print("!!! NAN INPUTS!!!")
-                    continue
+                        inputs = processor(
+                            text=texts,
+                            images=image_inputs,
+                            videos=video_inputs,
+                            padding=True,
+                            return_tensors="pt",
+                        )
+
+                elif args.training_stage == 2:
+                    messages = [
+                        [{
+                        "role": "user",
+                        "content":[
+                            {
+                                "type": "image",
+                                "image": img
+                            } for img in img_list] + [{"type": "text", "text": "Explain an image in detail with above objects following the prompt:" + batch["prompts"][idx]}]
+                        }] for idx, img_list in enumerate(batch["object_prompt_embeds"])
+                    ]
+
+                    text = [processor.apply_chat_template(message, tokenize=False, add_generation_prompt=True) for message in messages]
+
+                    image_inputs, video_inputs = process_vision_info(messages)
+
+                    inputs = processor(
+                        text=text,
+                        images=image_inputs,
+                        videos=video_inputs,
+                        padding=True,
+                        return_tensors="pt",
+                    )
+
                 else:
-                    encoder_hidden_states = trinity_embeds
+                    raise ValueError("Wrong training stage input !!!")
+                
+                inputs = inputs.to(device=latents.device, dtype=weight_dtype)
+                inputs = {f"lmm_{k}": v for k, v in inputs.items()} 
 
                 # Get the target for loss depending on the prediction type
                 if args.prediction_type is not None:
@@ -924,24 +951,11 @@ def main(args):
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
-                # Ensure consistent R1 across all processes
-                if accelerator.is_main_process:
-                    R1_tensor = torch.tensor(np.random.randint(1, 10), device=accelerator.device)
-                else:
-                    R1_tensor = torch.tensor(0, device=accelerator.device)
+                inputs["unet_hidden_states"] = noisy_latents
+                inputs["unet_time_step"] = timesteps
 
-                # Synchronize across processes if distributed
-                if accelerator.distributed_type != "NO":
-                    torch.distributed.broadcast(R1_tensor, src=0)
-                
-                R1 = R1_tensor.item()
-
-                noise_obj2 = unet(noisy_latents, timesteps, prompt_embeds, return_dict=False)[0]
-                if R1 > 3:
-                    noise_obj1 = unet(noisy_latents, timesteps, encoder_hidden_states, return_dict=False)[0]
-                    model_pred = 0.3*(noise_obj1 - noise_obj2) + noise_obj2
-                else:
-                    model_pred = noise_obj2
+                # pass it through transformer
+                model_pred = transformer(**inputs)
 
                 if args.snr_gamma is None:
                     loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
@@ -969,7 +983,7 @@ def main(args):
                 # Backpropagate
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
-                    params_to_clip = list(lora_layers) + list(trinity.parameters()) + list(proj_layer.parameters())
+                    params_to_clip = (transformer.parameters())
                     accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
                 optimizer.step()
                 lr_scheduler.step()
@@ -984,12 +998,16 @@ def main(args):
 
                 if global_step % args.checkpointing_steps == 0:
                     if accelerator.is_main_process:
-                        save_path = os.path.join(args.output_dir, f"sd15-checkpoint-{global_step}")
+                        save_path = os.path.join(args.output_dir, f"sd15-qwen25-checkpoint-{global_step}")
+
+                        if args.training_stage == 2:
+                            save_path = save_path = os.path.join(args.output_dir, f"sd15-qwen25-checkpoint-st2-{global_step}")
+
                         accelerator.save_state(save_path)
 
-                        unwrapped_unet = unwrap_model(unet)
+                        transformer_ = accelerator.unwrap_model(transformer)
                         unet_lora_state_dict = convert_state_dict_to_diffusers(
-                            get_peft_model_state_dict(unwrapped_unet)
+                            get_peft_model_state_dict(transformer_.unet)
                         )
 
                         StableDiffusionPipeline.save_lora_weights(
@@ -1001,8 +1019,8 @@ def main(args):
                         # save the rem 2 models
                         # proj_layer_ = accelerator.unwrap_model(proj_layer)
                         # trinity_ = accelerator.unwrap_model(trinity)
-                        torch.save(proj_layer.state_dict(), os.path.join(save_path, "proj_checkpoint"+".pt"))
-                        torch.save(trinity.state_dict(), os.path.join(save_path, "trinity_checkpoint"+".pt"))
+                        torch.save(transformer_.linear.state_dict(), os.path.join(save_path, "proj_checkpoint"+".pt"))
+                        torch.save(transformer_.trinity.state_dict(), os.path.join(save_path, "trinity_checkpoint"+".pt"))
 
                         logger.info(f"Saved state to {save_path}")
 
