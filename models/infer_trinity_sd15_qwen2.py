@@ -51,13 +51,14 @@ from diffusers.optimization import get_scheduler
 from diffusers.training_utils import cast_training_params, compute_snr
 from diffusers.utils import check_min_version, convert_state_dict_to_diffusers
 from diffusers.utils.torch_utils import is_compiled_module
-from diffusers.models.unets.unet_2d_condition import QwenVL_SD15_UNet2DModel
+from diffusers.models.unets.unet_2d_condition import QwenVL_SD15_pipeline
+from itertools import product
 from PIL import Image
 
 import glob, json
 import pdb as pdb_original
 from pipeline1 import EncoderModel
-from trinity_dataloader import SD15_Qwen2_TrainDataset
+from trinity_dataloader import SD15_Qwen2_InferDataset
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.33.0.dev0")
@@ -139,6 +140,15 @@ def parse_args(input_args=None):
         default=0,
         help=(
             "Do you wanna bg in training?"
+        ),
+    )
+
+    parser.add_argument(
+        "--image_or_prompt",
+        type=int,
+        default=1,
+        help=(
+            "1 for prompt and 2 for image only condition."
         ),
     )
 
@@ -252,6 +262,14 @@ def parse_args(input_args=None):
         default="/nfshomes/asarkar6/aditya/PRISM/backup/",
         help="The directory where the downloaded models and datasets will be stored.",
     )
+
+    parser.add_argument(
+        "--output_img_dir",
+        type=str,
+        default="/nfshomes/asarkar6/aditya/gen_images/",
+        help="The directory where the downloaded models and datasets will be stored.",
+    )
+    
     parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
     parser.add_argument(
         "--resolution",
@@ -515,17 +533,16 @@ def transform_image(imgs, args):
         pixel_values.append(train_transforms(img))
     return torch.stack(pixel_values)
 
-def read_Trinity_dataset():
+# reads a batch of image-text pairs  
+def read_eval_dataset(args):
     # read multiple files
     json_obj = {"image":[], "prompt":[], "object":[]}
 
-    for name in glob.glob("/nfshomes/asarkar6/trinity/train_data/*.jsonl"):
-        with open(os.path.join("/nfshomes/asarkar6/trinity/train_data/", name), "r") as f:
+    for name in glob.glob(os.path.join(args.valid_path_name, "*.jsonl")):
+        with open(os.path.join(args.valid_path_name, name), "r") as f:
             for line in f:
                 try:
                     temp = json.loads(line.strip())
-                    # saves the image
-                    json_obj["image"].append(temp["file_name"])
                     # saves the text prompt
                     json_obj["prompt"].append(temp["prompt"])
                     # saves the object
@@ -609,82 +626,24 @@ def main(args):
     trinity.requires_grad_(False)
 
     # Load the transformer
-    transformer = QwenVL_SD15_UNet2DModel(qwen25, unet, trinity)
+    transformer = QwenVL_SD15_pipeline(qwen25, unet, trinity)
     transformer.requires_grad_(False)
     del unet, qwen25, trinity
     transformer.to(accelerator.device, dtype=torch.float32)
 
-    # Load scheduler
-    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler", cache_dir=args.cache_dir)
-
-    # Load the Autoencoder
-    vae = AutoencoderKL.from_pretrained(args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision, variant=args.variant, cache_dir=args.cache_dir)
-    vae.to(accelerator.device, dtype=weight_dtype)
-    vae.requires_grad_(False)
-
     # Load the qwen 2.5 autoprocessor
     processor = AutoProcessor.from_pretrained(args.pretrained_lmm_name, max_pixels = 512*28*28)
 
-    if args.training_stage == 2:
-        # get the Lora Modules
-        unet_lora_config = LoraConfig(
-            r=args.rank,
-            lora_alpha=args.rank,
-            init_lora_weights="gaussian",
-            target_modules=["to_k", "to_q", "to_v", "to_out.0"],
-        )
-
-        # Add adapter and make sure the trainable params are in float32.
-        transformer.unet.add_adapter(unet_lora_config)
-        list_lora_layers = list(lora_layers)
-        lora_layers = filter(lambda p: p.requires_grad, transformer.unet.parameters())
-
-    if args.mixed_precision == "fp16":
-        models = [transformer.unet, transformer.trinity, transformer.linear]
-        # only upcast trainable parameters (LoRA) into fp32
-        # cast_training_params(models, dtype=torch.float32)
-
-        for m in models:
-            for param in m.parameters():
-                if param.requires_grad:
-                    param.data = param.to(dtype=torch.float32)
-        
-
-    if args.gradient_checkpointing:
-        transformer.unet.enable_gradient_checkpointing()
-
-    # Enable TF32 for faster training on Ampere GPUs,
-    # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
-    if args.allow_tf32:
-        torch.backends.cuda.matmul.allow_tf32 = True
-
-    if args.scale_lr:
-        args.learning_rate = (
-            args.learning_rate * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
-        )
-
-    # Initialize the optimizer
-    if args.use_8bit_adam:
-        try:
-            import bitsandbytes as bnb
-        except ImportError:
-            raise ImportError(
-                "Please install bitsandbytes to use 8-bit Adam. You can do so by running `pip install bitsandbytes`"
-            )
-
-        optimizer_cls = bnb.optim.AdamW8bit
-    else:
-        optimizer_cls = torch.optim.AdamW
-
-    params_to_optimize = list(transformer.trinity.parameters()) + list(transformer.linear.parameters())
-    
-    optimizer = optimizer_cls(
-        params_to_optimize,
-        lr=args.learning_rate,
-        betas=(args.adam_beta1, args.adam_beta2),
-        weight_decay=args.adam_weight_decay,
-        eps=args.adam_epsilon,
+    # get the Lora Modules
+    unet_lora_config = LoraConfig(
+        r=args.rank,
+        lora_alpha=args.rank,
+        init_lora_weights="gaussian",
+        target_modules=["to_k", "to_q", "to_v", "to_out.0"],
     )
+
+    # Add adapter and make sure the trainable params are in float32.
+    transformer.unet.add_adapter(unet_lora_config)
 
     def unwrap_model(model):
         model = accelerator.unwrap_model(model)
@@ -694,24 +653,20 @@ def main(args):
     # Get the specified interpolation method from the args
     # interpolation = getattr(transforms.InterpolationMode, args.image_interpolation_mode.upper(), None)
     def collate_fn(batch):
-        pixel_values = [item["pixel_values"] for item in batch]
         prompts = [item["prompts"] for item in batch]
         object_prompt_embeds = [item["object_prompt_embeds"] for item in batch]
-        filenames = [item["filenames"] for item in batch]
         return {
-            "pixel_values": pixel_values,
             "prompts": prompts,
             "object_prompt_embeds": object_prompt_embeds,
-            "filenames": filenames
         }
     
     # load the dataset
-    json_obj = read_Trinity_dataset()
+    json_obj = read_eval_dataset(args)
 
     # DataLoaders creation.
     bgs = Image.open(os.path.join(args.bg_dir, np.random.choice(os.listdir(args.bg_dir))))
     # change dataloader
-    precomputed_dataset = SD15_Qwen2_TrainDataset(json_obj, args, bgs)
+    precomputed_dataset = SD15_Qwen2_InferDataset(json_obj, args, bgs)
     train_dataloader = torch.utils.data.DataLoader(
         precomputed_dataset,
         shuffle=False,
@@ -720,316 +675,144 @@ def main(args):
         num_workers=args.dataloader_num_workers,
     )
 
-    # Scheduler and math around the number of training steps.
-    # Check the PR https://github.com/huggingface/diffusers/pull/8312 for detailed explanation.
-    num_warmup_steps_for_scheduler = args.lr_warmup_steps * accelerator.num_processes
-    if args.max_train_steps is None:
-        len_train_dataloader_after_sharding = math.ceil(len(train_dataloader) / accelerator.num_processes)
-        num_update_steps_per_epoch = math.ceil(len_train_dataloader_after_sharding / args.gradient_accumulation_steps)
-        num_training_steps_for_scheduler = (
-            args.num_train_epochs * num_update_steps_per_epoch * accelerator.num_processes
-        )
-    else:
-        num_training_steps_for_scheduler = args.max_train_steps * accelerator.num_processes
-
-    lr_scheduler = get_scheduler(
-        args.lr_scheduler,
-        optimizer=optimizer,
-        num_warmup_steps=num_warmup_steps_for_scheduler,
-        num_training_steps=num_training_steps_for_scheduler,
-    )
-
-    # Decide which layers to train 
-    transformer.trinity.requires_grad_(True)
-    transformer.linear.requires_grad_(True)
-    transformer.unet.requires_grad_(False)
+    transformer.trinity.requires_grad_(False)
+    transformer.linear.requires_grad_(False)
 
     # Prepare everything with our `accelerator`.
-    transformer, train_dataloader, lr_scheduler = accelerator.prepare(
-        transformer, train_dataloader, lr_scheduler
-    )
-
-    # We need to recalculate our total training steps as the size of the training dataloader may have changed.
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
-    if args.max_train_steps is None:
-        args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
-        if num_training_steps_for_scheduler != args.max_train_steps * accelerator.num_processes:
-            logger.warning(
-                f"The length of the 'train_dataloader' after 'accelerator.prepare' ({len(train_dataloader)}) does not match "
-                f"the expected length ({len_train_dataloader_after_sharding}) when the learning rate scheduler was created. "
-                f"This inconsistency may result in the learning rate scheduler not functioning properly."
-            )
-    # Afterwards we recalculate our number of training epochs
-    args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
-
-    # We need to initialize the trackers we use, and also store our configuration.
-    # The trackers initializes automatically on the main process.
-    if accelerator.is_main_process:
-        accelerator.init_trackers("text2image-fine-tune", config=vars(args))
+    transformer= accelerator.prepare(transformer)
 
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
-    logger.info("***** Running training stage " + str(args.training_stage) + "*****")
+    logger.info("***** Running Inference stage " + str(args.training_stage) + "*****")
     logger.info(f"  Num examples = {len(precomputed_dataset)}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
-    logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
-    logger.info(f"  Total optimization steps = {args.max_train_steps}")
     global_step = 0
     first_epoch = 0
 
     # resume from checkpoint
     if args.resume_from_checkpoint == "latest":
-        all_pths_2 = glob.glob(os.path.join(args.output_dir, "sd15-qwen25-checkpoint-st2-*"))
-        all_pths = glob.glob(os.path.join(args.output_dir, "sd15-qwen25-checkpoint-*"))
-
-        final_pth = all_pths_2 if len(all_pths_2) != 0 else all_pths
+        if args.training_stage == 1:
+            final_pth = glob.glob(os.path.join(args.output_dir, "sd15-qwen25-checkpoint-st1-*"))
+        elif args.training_stage == 2:
+            final_pth = glob.glob(os.path.join(args.output_dir, "sd15-qwen25-checkpoint-st2-*"))
+        else:
+            raise ValueError("Not able to find weights!!")
 
         if len(final_pth) != 0:
             path_name = sorted(final_pth, key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
             accelerator.print(f"Resuming from checkpoint {path_name}")
             input_dir = os.path.join(args.output_dir, path_name)
             
-            # load the unet
+            # load the transformer (lmm, unet, trinity, linear)
             accelerator.load_state(input_dir)
-
-            global_step = int(path_name.split("-")[-1])
-            initial_global_step = global_step
-            first_epoch = global_step // num_update_steps_per_epoch
         else:
-            initial_global_step = 0
-            first_epoch = 0
-            global_step = 0
-    else:
-        initial_global_step = 0
-        first_epoch = 0
-        global_step = 0
-
-    # load a new optimizer for 2nd training stage
-    if args.training_stage == 2:
-        params_to_optimize = list_lora_layers + params_to_optimize
+            raise ValueError("Please give me a path name for loading weights!!")
         
-        optimizer = optimizer_cls(
-            params_to_optimize,
-            lr=args.learning_rate,
-            betas=(args.adam_beta1, args.adam_beta2),
-            weight_decay=args.adam_weight_decay,
-            eps=args.adam_epsilon,
-        )
+        # use a stable diffusion pipeline
+        sd_model = DiffusionPipeline.from_pretrained("stable-diffusion-v1-5/stable-diffusion-v1-5", torch_dtype=torch.float16, safety_checker = None, requires_safety_checker = False)
+        if args.training_stage == 2:
+            sd_model.load_lora_weights(os.path.join(args.output_dir, path_name))
+        sd_model.set_progress_bar_config(disable=True)
 
-        optimizer = accelerator.prepare(optimizer)
+    transformer.eval()
 
-        initial_global_step = 0
-        first_epoch = 0
+    for step, batch in enumerate(tqdm(train_dataloader, desc="Inferring..")):
 
-    progress_bar = tqdm(
-        range(0, args.max_train_steps),
-        initial=initial_global_step,
-        desc="Steps",
-        # Only show the progress bar once on each machine.
-        disable=not accelerator.is_local_main_process,
-    )
+        # get the inputs for each model
+        if args.training_stage == 1:
+            # Ensure consistent R1 across all processes
+            if accelerator.is_main_process:
+                R1_tensor = torch.tensor(args.image_or_prompt, device=accelerator.device)
+            else:
+                R1_tensor = torch.tensor(1, device=accelerator.device)
 
-    transformer.train()
+            # Synchronize across processes if distributed
+            if accelerator.distributed_type != "NO":
+                torch.distributed.broadcast(R1_tensor, src=0)
+            
+            R1 = R1_tensor.item()
 
-    for epoch in range(first_epoch, args.num_train_epochs):
-        train_loss = 0.0
-        for step, batch in enumerate(train_dataloader):
-            with accelerator.accumulate(transformer):
-                # transform the pixel values
-                batch["pixel_values"] = transform_image(batch["pixel_values"], args)
+            # prompt only as input
+            if R1 == 1:
+                text = ["Describe an image in detail with prompt: " + prompt for prompt in batch["prompts"]]
 
-                # Convert images to latent space
-                latents = vae.encode(batch["pixel_values"].to(accelerator.device, dtype=weight_dtype)).latent_dist.sample()
-                latents = latents * vae.config.scaling_factor
+                # load the processor
+                inputs = processor(
+                    text=text,
+                    padding="longest",
+                    return_tensors="pt",
+                )
 
-                # Sample noise that we'll add to the latents
-                noise = torch.randn_like(latents)
-                if args.noise_offset:
-                    # https://www.crosslabs.org//blog/diffusion-with-offset-noise
-                    noise += args.noise_offset * torch.randn(
-                        (latents.shape[0], latents.shape[1], 1, 1), device=latents.device
-                    )
+            elif R1 == 2:
+                messages = [
+                    [{
+                    "role": "user",
+                    "content":[
+                        {
+                            "type": "image",
+                            "image": img
+                        } for img in img_list] + [{"type": "text", "text": "Explain an image in detail with above objects."}]
+                    }] for img_list in batch["object_prompt_embeds"]
+                ]
 
-                bsz = latents.shape[0]
+                texts = [processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) for msg in messages]
+                image_inputs, video_inputs = process_vision_info(messages)
 
-                # Sample a random timestep for each image
-                timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device)
-                timesteps = timesteps.long()
+                inputs = processor(
+                    text=texts,
+                    images=image_inputs,
+                    videos=video_inputs,
+                    padding=True,
+                    return_tensors="pt",
+                )
 
-                # Add noise to the latents according to the noise magnitude at each timestep
-                # (this is the forward diffusion process)
-                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+        elif args.training_stage == 2:
+            messages = [
+                [{
+                "role": "user",
+                "content":[
+                    {
+                        "type": "image",
+                        "image": img
+                    } for img in img_list] + [{"type": "text", "text": "Explain an image in detail with above objects following the prompt:" + batch["prompts"][idx]}]
+                }] for idx, img_list in enumerate(batch["object_prompt_embeds"])
+            ]
 
-                # get the inputs for each model
-                if args.training_stage == 1:
-                    # Ensure consistent R1 across all processes
-                    if accelerator.is_main_process:
-                        R1_tensor = torch.tensor(np.random.randint(1, 3), device=accelerator.device)
-                    else:
-                        R1_tensor = torch.tensor(1, device=accelerator.device)
+            text = [processor.apply_chat_template(message, tokenize=False, add_generation_prompt=True) for message in messages]
 
-                    # Synchronize across processes if distributed
-                    if accelerator.distributed_type != "NO":
-                        torch.distributed.broadcast(R1_tensor, src=0)
-                    
-                    R1 = R1_tensor.item()
+            image_inputs, video_inputs = process_vision_info(messages)
 
-                    # prompt only as input
-                    if R1 == 1:
-                        text = ["Describe an image in detail with prompt: " + prompt for prompt in batch["prompts"]]
+            inputs = processor(
+                text=text,
+                images=image_inputs,
+                videos=video_inputs,
+                padding=True,
+                return_tensors="pt",
+            )
 
-                        # load the processor
-                        inputs = processor(
-                            text=text,
-                            padding="longest",
-                            return_tensors="pt",
-                        )
+        else:
+            raise ValueError("Wrong training stage input !!!")
+        
+        inputs = inputs.to(device=accelerator.device, dtype=weight_dtype)
+        inputs = {f"lmm_{k}": v for k, v in inputs.items()}
 
-                    elif R1 == 2:
-                        messages = [
-                            [{
-                            "role": "user",
-                            "content":[
-                                {
-                                    "type": "image",
-                                    "image": img
-                                } for img in img_list] + [{"type": "text", "text": "Explain an image in detail with above objects."}]
-                            }] for img_list in batch["object_prompt_embeds"]
-                        ]
+        # pass it through transformer
+        encoder_hidden_states = transformer(**inputs)
 
-                        texts = [processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) for msg in messages]
-                        image_inputs, video_inputs = process_vision_info(messages)
+        # get the images
+        sd_model.to(accelerator.device)
 
-                        inputs = processor(
-                            text=texts,
-                            images=image_inputs,
-                            videos=video_inputs,
-                            padding=True,
-                            return_tensors="pt",
-                        )
+        with torch.no_grad():
+            images = sd_model(prompt_embeds=encoder_hidden_states, num_inference_steps=50, num_images_per_prompt=args.num_validation_images).images
 
-                elif args.training_stage == 2:
-                    messages = [
-                        [{
-                        "role": "user",
-                        "content":[
-                            {
-                                "type": "image",
-                                "image": img
-                            } for img in img_list] + [{"type": "text", "text": "Explain an image in detail with above objects following the prompt:" + batch["prompts"][idx]}]
-                        }] for idx, img_list in enumerate(batch["object_prompt_embeds"])
-                    ]
-
-                    text = [processor.apply_chat_template(message, tokenize=False, add_generation_prompt=True) for message in messages]
-
-                    image_inputs, video_inputs = process_vision_info(messages)
-
-                    inputs = processor(
-                        text=text,
-                        images=image_inputs,
-                        videos=video_inputs,
-                        padding=True,
-                        return_tensors="pt",
-                    )
-
-                else:
-                    raise ValueError("Wrong training stage input !!!")
-                
-                inputs = inputs.to(device=latents.device, dtype=weight_dtype)
-                inputs = {f"lmm_{k}": v for k, v in inputs.items()} 
-
-                # Get the target for loss depending on the prediction type
-                if args.prediction_type is not None:
-                    # set prediction_type of scheduler if defined
-                    noise_scheduler.register_to_config(prediction_type=args.prediction_type)
-
-                if noise_scheduler.config.prediction_type == "epsilon":
-                    target = noise
-                elif noise_scheduler.config.prediction_type == "v_prediction":
-                    target = noise_scheduler.get_velocity(latents, noise, timesteps)
-                else:
-                    raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
-
-                inputs["unet_hidden_states"] = noisy_latents
-                inputs["unet_time_step"] = timesteps
-
-                # pass it through transformer
-                model_pred = transformer(**inputs)
-
-                if args.snr_gamma is None:
-                    loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
-                else:
-                    # Compute loss-weights as per Section 3.4 of https://huggingface.co/papers/2303.09556.
-                    # Since we predict the noise instead of x_0, the original formulation is slightly changed.
-                    # This is discussed in Section 4.2 of the same paper.
-                    snr = compute_snr(noise_scheduler, timesteps)
-                    mse_loss_weights = torch.stack([snr, args.snr_gamma * torch.ones_like(timesteps)], dim=1).min(
-                        dim=1
-                    )[0]
-                    if noise_scheduler.config.prediction_type == "epsilon":
-                        mse_loss_weights = mse_loss_weights / snr
-                    elif noise_scheduler.config.prediction_type == "v_prediction":
-                        mse_loss_weights = mse_loss_weights / (snr + 1)
-
-                    loss = F.mse_loss(model_pred.float(), target.float(), reduction="none")
-                    loss = loss.mean(dim=list(range(1, len(loss.shape)))) * mse_loss_weights
-                    loss = loss.mean()
-
-                # Gather the losses across all processes for logging (if we use distributed training).
-                avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
-                train_loss += avg_loss.item() / args.gradient_accumulation_steps
-
-                # Backpropagate
-                accelerator.backward(loss)
-                if accelerator.sync_gradients:
-                    params_to_clip = (transformer.parameters())
-                    accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad()
-
-            # Checks if the accelerator has performed an optimization step behind the scenes
-            if accelerator.sync_gradients:
-                progress_bar.update(1)
-                global_step += 1
-                accelerator.log({"train_loss": train_loss}, step=global_step)
-                train_loss = 0.0
-
-                if global_step % args.checkpointing_steps == 0:
-                    if accelerator.is_main_process:
-                        save_path = os.path.join(args.output_dir, f"sd15-qwen25-checkpoint-{global_step}")
-
-                        if args.training_stage == 2:
-                            save_path = save_path = os.path.join(args.output_dir, f"sd15-qwen25-checkpoint-st2-{global_step}")
-
-                        accelerator.save_state(save_path)
-
-                        if args.training_stage == 2:
-                            transformer_ = accelerator.unwrap_model(transformer)
-                            unet_lora_state_dict = convert_state_dict_to_diffusers(
-                                get_peft_model_state_dict(transformer_.unet)
-                            )
-
-                            StableDiffusionPipeline.save_lora_weights(
-                                save_directory=save_path,
-                                unet_lora_layers=unet_lora_state_dict,
-                                safe_serialization=True,
-                            )
-
-                        # save these layers for safety
-                        torch.save(transformer_.linear.state_dict(), os.path.join(save_path, "proj_checkpoint"+".pt"))
-                        torch.save(transformer_.trinity.state_dict(), os.path.join(save_path, "trinity_checkpoint"+".pt"))
-
-                        logger.info(f"Saved state to {save_path}")
-
-            logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
-            progress_bar.set_postfix(**logs)
-
-            if global_step >= args.max_train_steps:
-                break
+        # save the images
+        for p_idx, i_idx in product(range(len(batch["prompts"])), range(args.num_validation_images)):
+            idx = p_idx * args.num_validation_images + i_idx
+            pdx = step * len(batch["prompts"]) + p_idx
+            images[idx].save(os.path.join(args.output_img_dir, f"prompt{pdx}_img{i_idx}.png"))
 
     accelerator.end_training()
 

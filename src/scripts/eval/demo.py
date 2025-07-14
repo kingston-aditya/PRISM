@@ -173,6 +173,7 @@ def main():
     noise_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
         SD3_PATH, subfolder="scheduler"
     )
+
     processor = AutoProcessor.from_pretrained(QWEN_PATH, max_pixels=512*28*28)
     vae = AutoencoderKL.from_pretrained(
         SD3_PATH,
@@ -196,6 +197,7 @@ def main():
 
     # Apply LoRA configurations
     sd3_model.add_adapter(transformer_lora_config)
+    sd3_model.to(accelerator.device)
 
     # Model initialization - Qwen 2
     qwenvl2_model = Qwen2VLForConditionalGeneration.from_pretrained(QWEN_PATH, cache_dir=MODEL_PATH)
@@ -236,6 +238,10 @@ def main():
         # Initialize the model using the configuration
         print("Initializing the model based on the configuration...")
         model = QwenVLSD3Transformer2DModel(qwenvl2_model, sd3_model)
+
+        del qwenvl2_model, sd3_model
+
+        model.to(accelerator.device)
         
         # Step 2: Load the Model Index
         print("Loading model index file...")
@@ -320,6 +326,8 @@ def main():
         vae
     )
     pipeline.to(accelerator.device)
+
+    del model, vae
 
     pipeline = accelerator.prepare(pipeline)
 

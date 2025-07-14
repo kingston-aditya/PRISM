@@ -785,3 +785,42 @@ class SD15_Qwen2_TrainDataset(Dataset):
 
     def __len__(self):
         return len(self.temp["prompt"])
+
+
+class SD15_Qwen2_InferDataset(Dataset):
+    def __init__(self, temp, args, bg):
+        # load dataset
+        self.temp = temp
+        self.args = args
+        self.bg = bg
+    
+    def __getitem__(self, idx):        
+        # get the image objects
+        bbox_values = []
+        bbox_info = self.temp["object"][idx]
+        if len(bbox_info) > 0:
+            # get the prompt tokens
+            with torch.no_grad():
+                prompt_toks = self.temp["prompt"][idx]
+
+            # process the bbox
+            for idx, item in enumerate(bbox_info):
+                # store the PIL images
+                img_mat = Image.open(os.path.join(self.args.valid_path_name, item["img_pth"])).convert("RGB")
+                img_mat = transform_obj(img_mat, self.args)
+                
+                # appends the image matrix and label tokens
+                bbox_values.append(img_mat)
+
+        elif len(bbox_info) == 0:
+            raise Exception("Give me an object")
+            
+        return {
+            "prompts": prompt_toks,
+            "object_prompt_embeds": bbox_values,
+        }
+
+    def __len__(self):
+        return len(self.temp["prompt"])
+    
+

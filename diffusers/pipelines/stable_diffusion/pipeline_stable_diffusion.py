@@ -1,4 +1,4 @@
-# Copyright 2024 The HuggingFace Team. All rights reserved.
+# Copyright 2025 The HuggingFace Team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -39,21 +39,6 @@ from ..pipeline_utils import DiffusionPipeline, StableDiffusionMixin
 from .pipeline_output import StableDiffusionPipelineOutput
 from .safety_checker import StableDiffusionSafetyChecker
 
-import pdb as pdb_original
-import sys
-
-class ForkedPdb(pdb_original.Pdb):
-    """A Pdb subclass that may be used
-    from a forked multiprocessing child
-    """
-    def interaction(self, *args, **kwargs):
-        _stdin = sys.stdin
-        try:
-            sys.stdin = open('/dev/stdin')
-            pdb_original.Pdb.interaction(self, *args, **kwargs)
-        finally:
-            sys.stdin = _stdin
-
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -85,7 +70,7 @@ def rescale_noise_cfg(noise_cfg, noise_pred_text, guidance_rescale=0.0):
     r"""
     Rescales `noise_cfg` tensor based on `guidance_rescale` to improve image quality and fix overexposure. Based on
     Section 3.4 from [Common Diffusion Noise Schedules and Sample Steps are
-    Flawed](https://arxiv.org/pdf/2305.08891.pdf).
+    Flawed](https://huggingface.co/papers/2305.08891).
 
     Args:
         noise_cfg (`torch.Tensor`):
@@ -352,7 +337,6 @@ class StableDiffusionPipeline(
         do_classifier_free_guidance,
         negative_prompt=None,
         prompt_embeds: Optional[torch.Tensor] = None,
-        text_embeds: Optional[torch.Tensor] = None,
         negative_prompt_embeds: Optional[torch.Tensor] = None,
         lora_scale: Optional[float] = None,
         clip_skip: Optional[int] = None,
@@ -506,11 +490,10 @@ class StableDiffusionPipeline(
                 attention_mask = None
 
             negative_prompt_embeds = self.text_encoder(
-                uncond_input.input_ids[:,:77].to(device),
+                uncond_input.input_ids.to(device),
                 attention_mask=attention_mask,
             )
             negative_prompt_embeds = negative_prompt_embeds[0]
-            # negative_prompt_embeds = prompt_embeds
 
         if do_classifier_free_guidance:
             # duplicate unconditional embeddings for each generation per prompt, using mps friendly method
@@ -526,15 +509,7 @@ class StableDiffusionPipeline(
                 # Retrieve the original scale by scaling back the LoRA layers
                 unscale_lora_layers(self.text_encoder, lora_scale)
 
-        if text_embeds is not None:
-            text_embeds = text_embeds.to(dtype=prompt_embeds_dtype, device=device)
-
-            bs_embed, seq_len, _ = text_embeds.shape
-            # duplicate text embeddings for each generation per prompt, using mps friendly method
-            text_embeds = text_embeds.repeat(1, num_images_per_prompt, 1)
-            text_embeds = text_embeds.view(bs_embed * num_images_per_prompt, seq_len, -1)
-
-        return prompt_embeds, negative_prompt_embeds, text_embeds
+        return prompt_embeds, negative_prompt_embeds
 
     def encode_image(self, image, device, num_images_per_prompt, output_hidden_states=None):
         dtype = next(self.image_encoder.parameters()).dtype
@@ -633,7 +608,7 @@ class StableDiffusionPipeline(
     def prepare_extra_step_kwargs(self, generator, eta):
         # prepare extra kwargs for the scheduler step, since not all schedulers have the same signature
         # eta (η) is only used with the DDIMScheduler, it will be ignored for other schedulers.
-        # eta corresponds to η in DDIM paper: https://arxiv.org/abs/2010.02502
+        # eta corresponds to η in DDIM paper: https://huggingface.co/papers/2010.02502
         # and should be between [0, 1]
 
         accepts_eta = "eta" in set(inspect.signature(self.scheduler.step).parameters.keys())
@@ -782,7 +757,7 @@ class StableDiffusionPipeline(
         return self._clip_skip
 
     # here `guidance_scale` is defined analog to the guidance weight `w` of equation (2)
-    # of the Imagen paper: https://arxiv.org/pdf/2205.11487.pdf . `guidance_scale = 1`
+    # of the Imagen paper: https://huggingface.co/papers/2205.11487 . `guidance_scale = 1`
     # corresponds to doing no classifier free guidance.
     @property
     def do_classifier_free_guidance(self):
@@ -817,7 +792,6 @@ class StableDiffusionPipeline(
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         latents: Optional[torch.Tensor] = None,
         prompt_embeds: Optional[torch.Tensor] = None,
-        text_embeds: Optional[torch.Tensor] = None,
         negative_prompt_embeds: Optional[torch.Tensor] = None,
         ip_adapter_image: Optional[PipelineImageInput] = None,
         ip_adapter_image_embeds: Optional[List[torch.Tensor]] = None,
@@ -862,8 +836,8 @@ class StableDiffusionPipeline(
             num_images_per_prompt (`int`, *optional*, defaults to 1):
                 The number of images to generate per prompt.
             eta (`float`, *optional*, defaults to 0.0):
-                Corresponds to parameter eta (η) from the [DDIM](https://arxiv.org/abs/2010.02502) paper. Only applies
-                to the [`~schedulers.DDIMScheduler`], and is ignored in other schedulers.
+                Corresponds to parameter eta (η) from the [DDIM](https://huggingface.co/papers/2010.02502) paper. Only
+                applies to the [`~schedulers.DDIMScheduler`], and is ignored in other schedulers.
             generator (`torch.Generator` or `List[torch.Generator]`, *optional*):
                 A [`torch.Generator`](https://pytorch.org/docs/stable/generated/torch.Generator.html) to make
                 generation deterministic.
@@ -893,7 +867,7 @@ class StableDiffusionPipeline(
                 [`self.processor`](https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/attention_processor.py).
             guidance_rescale (`float`, *optional*, defaults to 0.0):
                 Guidance rescale factor from [Common Diffusion Noise Schedules and Sample Steps are
-                Flawed](https://arxiv.org/pdf/2305.08891.pdf). Guidance rescale factor should fix overexposure when
+                Flawed](https://huggingface.co/papers/2305.08891). Guidance rescale factor should fix overexposure when
                 using zero terminal SNR.
             clip_skip (`int`, *optional*):
                 Number of layers to be skipped from CLIP while computing the prompt embeddings. A value of 1 means that
@@ -987,14 +961,13 @@ class StableDiffusionPipeline(
             self.cross_attention_kwargs.get("scale", None) if self.cross_attention_kwargs is not None else None
         )
 
-        prompt_embeds, negative_prompt_embeds, text_embeds = self.encode_prompt(
+        prompt_embeds, negative_prompt_embeds = self.encode_prompt(
             prompt,
             device,
             num_images_per_prompt,
             self.do_classifier_free_guidance,
             negative_prompt,
             prompt_embeds=prompt_embeds,
-            text_embeds=text_embeds,
             negative_prompt_embeds=negative_prompt_embeds,
             lora_scale=lora_scale,
             clip_skip=self.clip_skip,
@@ -1004,19 +977,7 @@ class StableDiffusionPipeline(
         # Here we concatenate the unconditional and text embeddings into a single batch
         # to avoid doing two forward passes
         if self.do_classifier_free_guidance:
-            if prompt_embeds.shape[-2] == 77:
-                prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
-            else:
-                repeat_count = (prompt_embeds.shape[-2] + 77 - 1) // 77
-                negative_prompt_embeds = negative_prompt_embeds.repeat(1, repeat_count, 1)[:, :prompt_embeds.shape[-2], :]
-                prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
-            # prompt_embeds = torch.cat([prompt_embeds, prompt_embeds])
-
-        if text_embeds is not None:
-            if text_embeds.shape[-2] == 77:
-                text_embeds = torch.cat([negative_prompt_embeds, text_embeds])
-            else:
-                raise ValueError("text embeds cannot have a token length > 77!!")
+            prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
 
         if ip_adapter_image is not None or ip_adapter_image_embeds is not None:
             image_embeds = self.prepare_ip_adapter_image_embeds(
@@ -1076,18 +1037,7 @@ class StableDiffusionPipeline(
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
                 # predict the noise residual
-                # ForkedPdb().set_trace()
-                noise_pred_2 = self.unet(
-                    latent_model_input,
-                    t,
-                    encoder_hidden_states=text_embeds,
-                    timestep_cond=timestep_cond,
-                    cross_attention_kwargs=self.cross_attention_kwargs,
-                    added_cond_kwargs=added_cond_kwargs,
-                    return_dict=False,
-                )[0]
-                
-                noise_pred_1 = self.unet(
+                noise_pred = self.unet(
                     latent_model_input,
                     t,
                     encoder_hidden_states=prompt_embeds,
@@ -1097,15 +1047,13 @@ class StableDiffusionPipeline(
                     return_dict=False,
                 )[0]
 
-                noise_pred = 0.3*(noise_pred_1 - noise_pred_2) + noise_pred_2
-
                 # perform guidance
                 if self.do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
                     noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
 
                 if self.do_classifier_free_guidance and self.guidance_rescale > 0.0:
-                    # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
+                    # Based on 3.4. in https://huggingface.co/papers/2305.08891
                     noise_pred = rescale_noise_cfg(noise_pred, noise_pred_text, guidance_rescale=self.guidance_rescale)
 
                 # compute the previous noisy sample x_t -> x_t-1
