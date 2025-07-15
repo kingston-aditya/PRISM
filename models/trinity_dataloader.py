@@ -376,7 +376,7 @@ class PixartTrainDataset_pl3(Dataset):
                         bbox_labels_attnmask.append(temp_txt_out.attention_mask)
                     except:
                         print("Something wrong with the bbox", self.temp["image"][idx])
-                        flag = 1git 
+                        flag = 1
         
         elif len(bbox_info) == 0 or flag==1:
             # get the prompt tokens
@@ -729,8 +729,8 @@ class SD15_Qwen2_TrainDataset(Dataset):
         try:
             img_mat = Image.open(os.path.join(self.args.dataset_name, self.temp["image"][idx])).convert("RGB")
         except Exception as e:
+            print("exception while opening an image", os.path.join(self.args.dataset_name, self.temp["image"][idx]))
             flag = 1
-        
         # get the image objects
         bbox_values = []
         bbox_info = self.temp["object"][idx]
@@ -760,7 +760,13 @@ class SD15_Qwen2_TrainDataset(Dataset):
                             temp_img = obj_img
                     else:
                         temp_img = obj_img
-                    bbox_values.append(Image.fromarray(temp_img))
+                    
+                    try:
+                        bbox_values.append(Image.fromarray(temp_img))
+                    except:
+                        print("Something wrong with the bbox", self.temp["image"][idx])
+                        flag = 1
+                    
 
         elif len(bbox_info) == 0 or flag==1:
             pixel_values = Image.open(os.path.join(self.args.backup, "temp_img.jpg")).convert("RGB")
@@ -780,7 +786,7 @@ class SD15_Qwen2_TrainDataset(Dataset):
                     temp_img = obj_img
                 temp_img = np.asarray(temp_img)
                 bbox_values.append(Image.fromarray(temp_img))
-            
+        
         return {
             "prompts": prompt_toks,
             "object_prompt_embeds": bbox_values,

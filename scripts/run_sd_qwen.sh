@@ -1,15 +1,15 @@
-accelerate launch --multi_gpu --main_process_port 29501 /nfshomes/asarkar6/aditya/PRISM/models/train_trinity_sd15_qwen2.py \
+accelerate launch --multi_gpu --main_process_port 29501 /data/home/saividyaranya/PRISM/models/train_trinity_sd15_qwen2.py \
   --pretrained_model_name_or_path="stable-diffusion-v1-5/stable-diffusion-v1-5" \
-  --dataset_name="/nfshomes/asarkar6/trinity/train_data/" \
-  --output_dir="/nfshomes/asarkar6/scratch/test_image/" \
-  --cache_dir="/nfshomes/asarkar6/trinity/model_weights/" \
-  --bg_dir="/nfshomes/asarkar6/aditya/PRISM/backgrounds/" \
-  --backup="/nfshomes/asarkar6/aditya/PRISM/backup/" \
-  --training_stage=2 \
+  --dataset_name="/data/home/saividyaranya/PRISM/cached_folder_real/images_again/" \
+  --output_dir="/home/saividyaranya/PRISM/all_output_logs/qwen" \
+  --cache_dir="/data/home/saividyaranya/PRISM/model_weights/" \
+  --bg_dir="/data/home/saividyaranya/PRISM/backgrounds" \
+  --backup="/data/home/saividyaranya/PRISM/backup/" \
+  --training_stage=1 \
   --resume_from_checkpoint="latest" \
   --wanna_bg=1 \
   --do_valid="True" \
-  --valid_path_name="/nfshomes/asarkar6/aditya/PRISM/validation/" \
+  --valid_path_name="/data/home/saividyaranya/PRISM/validation/" \
   --caption_column="prompt" \
   --object_column="object" \
   --mask_typ="no_mask" \
