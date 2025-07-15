@@ -1,10 +1,10 @@
-accelerate launch --multi_gpu --main_process_port 29501 /nfshomes/asarkar6/aditya/PRISM/models/train_trinity_pixart.py \
+ accelerate launch --config_file /home/saividyaranya/PRISM/accelerate_config.yaml  --multi_gpu  /home/saividyaranya/PRISM/models/train_trinity_pixart_pl3.py \
   --pretrained_model_name_or_path="PixArt-alpha/PixArt-XL-2-1024-MS" \
-  --dataset_name="/nfshomes/asarkar6/trinity/train_data/" \
-  --output_dir="/nfshomes/asarkar6/scratch/test_image/" \
-  --cache_dir="/nfshomes/asarkar6/trinity/model_weights/" \
-  --bg_dir="/nfshomes/asarkar6/aditya/PRISM/backgrounds/" \
-  --backup="/nfshomes/asarkar6/aditya/PRISM/backup/" \
+  --dataset_name="/data/home/saividyaranya/PRISM/cached_folder_real/images_again/" \
+  --output_dir="/data/home/saividyaranya/PRISM/all_output_logs/pixart3" \
+  --cache_dir="/data/home/saividyaranya/PRISM/model_weights3/" \
+  --bg_dir="/home/saividyaranya/PRISM/backgrounds/" \
+  --backup="/home/saividyaranya/PRISM/backup/" \
   --resume_from_checkpoint="latest" \
   --wanna_bg=1 \
   --caption_column="prompt" \
