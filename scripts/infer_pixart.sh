@@ -1,14 +1,15 @@
-accelerate launch --multi_gpu --main_process_port 29501 /nfshomes/asarkar6/aditya/PRISM/models/infer_trinity_pixart_pl3.py \
+
+accelerate launch  --multi_gpu --main_process_port 29501 /home/saividyaranya/PRISM/models/infer_trinity_pixart_pl2.py \
   --pretrained_model_name_or_path="PixArt-alpha/PixArt-XL-2-1024-MS" \
-  --dataset_name="/nfshomes/asarkar6/aditya/PRISM/validation/" \
-  --output_dir="/nfshomes/asarkar6/scratch/test_image/" \
-  --cache_dir="/nfshomes/asarkar6/trinity/model_weights/" \
-  --bg_dir="/nfshomes/asarkar6/aditya/PRISM/backgrounds/" \
-  --backup="/nfshomes/asarkar6/aditya/gen_images/" \
-  --valid_path_name="/nfshomes/asarkar6/aditya/PRISM/validation/" \
+  --dataset_name="/data/home/saividyaranya/PRISM/cached_folder_real/images_again/" \
+  --output_dir="/home/saividyaranya/PRISM/all_output_logs/pixart2" \
+  --cache_dir="/data/home/saividyaranya/PRISM/model_weights3/" \
+  --bg_dir="/home/saividyaranya/PRISM/backgrounds" \
+  --backup="/home/saividyaranya/PRISM/backup" \
+  --valid_path_name="/home/saividyaranya/PRISM/validation" \
   --resume_from_checkpoint="latest" \
   --wanna_bg=1 \
-  --output_image_dir="/nfshomes/asarkar6/aditya/gen_images/" \
+  --output_img_dir="/home/saividyaranya/PRISM/all_output_logs/pixart_infer_images2" \
   --caption_column="prompt" \
   --object_column="object" \
   --mask_typ="causal" \
