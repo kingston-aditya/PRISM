@@ -44,7 +44,7 @@ from transformers import Qwen2_5_VLForConditionalGeneration, AutoTokenizer, Auto
 from qwen_vl_utils import process_vision_info
 
 import sys
-sys.path.insert(1, "/nfshomes/asarkar6/aditya/PRISM/")
+sys.path.insert(1, "/home/saividyaranya/PRISM")
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, DiffusionPipeline, StableDiffusionPipeline, UNet2DConditionModel
 from diffusers.optimization import get_scheduler
@@ -519,8 +519,8 @@ def read_Trinity_dataset():
     # read multiple files
     json_obj = {"image":[], "prompt":[], "object":[]}
 
-    for name in glob.glob("/nfshomes/asarkar6/trinity/train_data/*.jsonl"):
-        with open(os.path.join("/nfshomes/asarkar6/trinity/train_data/", name), "r") as f:
+    for name in glob.glob("/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again/*.jsonl"):
+        with open(os.path.join("/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again/", name), "r") as f:
             for line in f:
                 try:
                     temp = json.loads(line.strip())
@@ -900,16 +900,20 @@ def main(args):
                             }] for img_list in batch["object_prompt_embeds"]
                         ]
 
-                        texts = [processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) for msg in messages]
-                        image_inputs, video_inputs = process_vision_info(messages)
+                        try:
+                            texts = [processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) for msg in messages]
+                            image_inputs, video_inputs = process_vision_info(messages)
 
-                        inputs = processor(
-                            text=texts,
-                            images=image_inputs,
-                            videos=video_inputs,
-                            padding=True,
-                            return_tensors="pt",
-                        )
+                            inputs = processor(
+                                text=texts,
+                                images=image_inputs,
+                                videos=video_inputs,
+                                padding=True,
+                                return_tensors="pt",
+                            )
+                        except Exception as e:
+                            print("exception from train is ", e)
+                            continue
 
                 elif args.training_stage == 2:
                     messages = [
