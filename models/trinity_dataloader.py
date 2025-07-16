@@ -749,7 +749,7 @@ class SD15_Qwen2_TrainDataset(Dataset):
                 y_min = int(item["ymin"])
                 y_max = min(int(item["ymax"]), self.bg.size[0])
 
-                if (x_max-x_min)*(y_max-y_min)>0 and y_max>=y_min and x_max>=x_min:
+                if (x_max-x_min)*(y_max-y_min)>0 and y_max>y_min and x_max>x_min:
                     trans_y, trans_x = self.bg.size[0]//2 - (y_min+y_max)//2, self.bg.size[1]//2 - (x_min+x_max)//2
                     obj_img = np.asarray(img_mat)[y_min:y_max, x_min:x_max]
                     temp_img = np.asarray(self.bg)
@@ -762,13 +762,17 @@ class SD15_Qwen2_TrainDataset(Dataset):
                         temp_img = obj_img
                     
                     try:
-                        bbox_values.append(Image.fromarray(temp_img))
+                        if 0 in Image.fromarray(temp_img).size:
+                            flag = 1
+                        else:
+                            bbox_values.append(Image.fromarray(temp_img))
+                        
                     except:
                         print("Something wrong with the bbox", self.temp["image"][idx])
                         flag = 1
                     
 
-        elif len(bbox_info) == 0 or flag==1:
+        if len(bbox_info) == 0 or flag==1:
             pixel_values = Image.open(os.path.join(self.args.backup, "temp_img.jpg")).convert("RGB")
             # get the prompt tokens
             with torch.no_grad():
@@ -786,7 +790,8 @@ class SD15_Qwen2_TrainDataset(Dataset):
                     temp_img = obj_img
                 temp_img = np.asarray(temp_img)
                 bbox_values.append(Image.fromarray(temp_img))
-        
+        # for i in bbox_values:
+        #     print(i.size, flag)
         return {
             "prompts": prompt_toks,
             "object_prompt_embeds": bbox_values,

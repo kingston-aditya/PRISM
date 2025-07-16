@@ -523,7 +523,10 @@ def read_Trinity_dataset():
         with open(os.path.join("/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again/", name), "r") as f:
             for line in f:
                 try:
+                    
                     temp = json.loads(line.strip())
+                    if temp["file_name"] in ['/data/home/saividyaranya/PRISM/cached_folder_real/images_again/1500000.png', '/data/home/saividyaranya/PRISM/cached_folder_real/images_again/1500001.png', '/data/home/saividyaranya/PRISM/cached_folder_real/images_again/1500002.png']: continue
+
                     # saves the image
                     json_obj["image"].append(temp["file_name"])
                     # saves the text prompt
@@ -887,6 +890,9 @@ def main(args):
                             padding="longest",
                             return_tensors="pt",
                         )
+                        if not hasattr(inputs, "to"):
+                            print("skipping bcz processer returned dict from R1 = 1")
+                            continue
 
                     elif R1 == 2:
                         messages = [
@@ -900,20 +906,28 @@ def main(args):
                             }] for img_list in batch["object_prompt_embeds"]
                         ]
 
-                        try:
-                            texts = [processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) for msg in messages]
-                            image_inputs, video_inputs = process_vision_info(messages)
+                        # try:
+                        for img_list in batch["object_prompt_embeds"]:
+                            for img in img_list:
+                                if 0 in img.size:
+                                    import pdb; pdb.set_trace()
+                                
+                        texts = [processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) for msg in messages]
+                        image_inputs, video_inputs = process_vision_info(messages)
 
-                            inputs = processor(
-                                text=texts,
-                                images=image_inputs,
-                                videos=video_inputs,
-                                padding=True,
-                                return_tensors="pt",
-                            )
-                        except Exception as e:
-                            print("exception from train is ", e)
+                        inputs = processor(
+                            text=texts,
+                            images=image_inputs,
+                            videos=video_inputs,
+                            padding=True,
+                            return_tensors="pt",
+                        )
+                        if not hasattr(inputs, "to"):
+                            print("skipping bcz processer returned dict From R1 = 2")
                             continue
+                        # except Exception as e:
+                        #     print("exception from train is ", e, batch["filenames"])
+                        #     continue
 
                 elif args.training_stage == 2:
                     messages = [
@@ -942,8 +956,15 @@ def main(args):
                 else:
                     raise ValueError("Wrong training stage input !!!")
                 
-                inputs = inputs.to(device=latents.device, dtype=weight_dtype)
-                inputs = {f"lmm_{k}": v for k, v in inputs.items()} 
+                try:
+                    inputs = inputs.to(device=latents.device, dtype=weight_dtype)
+                    inputs = {f"lmm_{k}": v for k, v in inputs.items()} 
+                except Exception as e:
+                    # import pdb; pdb.set_trace()
+                    traceback.print_exc()
+                    print('input type caset exception ',e)
+                    print("batch info is", batch["filenames"])
+                    continue
 
                 # Get the target for loss depending on the prediction type
                 if args.prediction_type is not None:
