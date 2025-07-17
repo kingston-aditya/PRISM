@@ -23,6 +23,7 @@ import random
 import shutil
 from contextlib import nullcontext
 from pathlib import Path
+import traceback
 
 import datasets
 import numpy as np
@@ -44,7 +45,7 @@ from transformers import Qwen2_5_VLForConditionalGeneration, AutoTokenizer, Auto
 from qwen_vl_utils import process_vision_info
 
 import sys
-sys.path.insert(1, "/home/saividyaranya/PRISM")
+sys.path.insert(1, "/nfshomes/asarkar6/aditya/PRISM/")
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, DiffusionPipeline, StableDiffusionPipeline, UNet2DConditionModel
 from diffusers.optimization import get_scheduler
@@ -519,14 +520,16 @@ def read_Trinity_dataset():
     # read multiple files
     json_obj = {"image":[], "prompt":[], "object":[]}
 
-    for name in glob.glob("/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again/*.jsonl"):
-        with open(os.path.join("/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again/", name), "r") as f:
+    for name in glob.glob("/nfshomes/asarkar6/trinity/train_data/*.jsonl"):
+        with open(os.path.join("/nfshomes/asarkar6/trinity/train_data/", name), "r") as f:
             for line in f:
                 try:
-                    
                     temp = json.loads(line.strip())
-                    if temp["file_name"] in ['/data/home/saividyaranya/PRISM/cached_folder_real/images_again/1500000.png', '/data/home/saividyaranya/PRISM/cached_folder_real/images_again/1500001.png', '/data/home/saividyaranya/PRISM/cached_folder_real/images_again/1500002.png']: continue
 
+                    # ignore corrupt images
+                    if temp["file_name"] in ['/data/home/saividyaranya/PRISM/cached_folder_real/images_again/1500000.png', '/data/home/saividyaranya/PRISM/cached_folder_real/images_again/1500001.png', '/data/home/saividyaranya/PRISM/cached_folder_real/images_again/1500002.png']: 
+                        continue
+                    
                     # saves the image
                     json_obj["image"].append(temp["file_name"])
                     # saves the text prompt
@@ -627,21 +630,7 @@ def main(args):
 
     # Load the qwen 2.5 autoprocessor
     processor = AutoProcessor.from_pretrained(args.pretrained_lmm_name, max_pixels = 512*28*28)
-
-    if args.training_stage == 2:
-        # get the Lora Modules
-        unet_lora_config = LoraConfig(
-            r=args.rank,
-            lora_alpha=args.rank,
-            init_lora_weights="gaussian",
-            target_modules=["to_k", "to_q", "to_v", "to_out.0"],
-        )
-
-        # Add adapter and make sure the trainable params are in float32.
-        transformer.unet.add_adapter(unet_lora_config)
-        list_lora_layers = list(lora_layers)
-        lora_layers = filter(lambda p: p.requires_grad, transformer.unet.parameters())
-
+        
     if args.mixed_precision == "fp16":
         models = [transformer.unet, transformer.trinity, transformer.linear]
         # only upcast trainable parameters (LoRA) into fp32
@@ -713,6 +702,7 @@ def main(args):
 
     # DataLoaders creation.
     bgs = Image.open(os.path.join(args.bg_dir, np.random.choice(os.listdir(args.bg_dir))))
+
     # change dataloader
     precomputed_dataset = SD15_Qwen2_TrainDataset(json_obj, args, bgs)
     train_dataloader = torch.utils.data.DataLoader(
@@ -786,7 +776,7 @@ def main(args):
     # resume from checkpoint
     if args.resume_from_checkpoint == "latest":
         all_pths_2 = glob.glob(os.path.join(args.output_dir, "sd15-qwen25-checkpoint-st2-*"))
-        all_pths = glob.glob(os.path.join(args.output_dir, "sd15-qwen25-checkpoint-*"))
+        all_pths = glob.glob(os.path.join(args.output_dir, "sd15-qwen25-checkpoint-st1*"))
 
         final_pth = all_pths_2 if len(all_pths_2) != 0 else all_pths
 
@@ -812,6 +802,21 @@ def main(args):
 
     # load a new optimizer for 2nd training stage
     if args.training_stage == 2:
+        # get the Lora Modules
+        unet_lora_config = LoraConfig(
+            r=args.rank,
+            lora_alpha=args.rank,
+            init_lora_weights="gaussian",
+            target_modules=["to_k", "to_q", "to_v", "to_out.0"],
+        )
+
+        transformer_ = accelerator.unwrap_model(transformer)
+
+        # Add adapter and make sure the trainable params are in float32.
+        transformer_.unet.add_adapter(unet_lora_config)
+        lora_layers = filter(lambda p: p.requires_grad, transformer_.unet.parameters())
+        list_lora_layers = list(lora_layers)
+
         params_to_optimize = list_lora_layers + params_to_optimize
         
         optimizer = optimizer_cls(
@@ -822,7 +827,7 @@ def main(args):
             eps=args.adam_epsilon,
         )
 
-        optimizer = accelerator.prepare(optimizer)
+        transformer, optimizer = accelerator.prepare(transformer_, optimizer)
 
         initial_global_step = 0
         first_epoch = 0
@@ -890,6 +895,7 @@ def main(args):
                             padding="longest",
                             return_tensors="pt",
                         )
+
                         if not hasattr(inputs, "to"):
                             print("skipping bcz processer returned dict from R1 = 1")
                             continue
@@ -906,12 +912,6 @@ def main(args):
                             }] for img_list in batch["object_prompt_embeds"]
                         ]
 
-                        # try:
-                        for img_list in batch["object_prompt_embeds"]:
-                            for img in img_list:
-                                if 0 in img.size:
-                                    import pdb; pdb.set_trace()
-                                
                         texts = [processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) for msg in messages]
                         image_inputs, video_inputs = process_vision_info(messages)
 
@@ -922,12 +922,10 @@ def main(args):
                             padding=True,
                             return_tensors="pt",
                         )
+
                         if not hasattr(inputs, "to"):
                             print("skipping bcz processer returned dict From R1 = 2")
                             continue
-                        # except Exception as e:
-                        #     print("exception from train is ", e, batch["filenames"])
-                        #     continue
 
                 elif args.training_stage == 2:
                     messages = [
@@ -960,7 +958,6 @@ def main(args):
                     inputs = inputs.to(device=latents.device, dtype=weight_dtype)
                     inputs = {f"lmm_{k}": v for k, v in inputs.items()} 
                 except Exception as e:
-                    # import pdb; pdb.set_trace()
                     traceback.print_exc()
                     print('input type caset exception ',e)
                     print("batch info is", batch["filenames"])
@@ -983,6 +980,12 @@ def main(args):
 
                 # pass it through transformer
                 model_pred = transformer(**inputs)
+
+                if torch.isnan(model_pred).any() or torch.isinf(model_pred).any():
+                    fil_names = batch["filenames"]
+                    accelerator.print(f"Model predictions going nan or inf at step {step}")
+                    accelerator.print(f"Filenames are {fil_names}")
+                    continue
 
                 if args.snr_gamma is None:
                     loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
@@ -1008,6 +1011,13 @@ def main(args):
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
 
                 # Backpropagate
+                ## skip batch is corrupt
+                if torch.isnan(loss).any() or torch.isinf(loss).any():
+                    fil_names = batch["filenames"]
+                    accelerator.print(f"Loss going nan or inf at step {step}")
+                    accelerator.print(f"Filenames are {fil_names}")
+                    continue
+
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
                     params_to_clip = (transformer.parameters())
@@ -1025,15 +1035,15 @@ def main(args):
 
                 if global_step % args.checkpointing_steps == 0:
                     if accelerator.is_main_process:
-                        save_path = os.path.join(args.output_dir, f"sd15-qwen25-checkpoint-{global_step}")
+                        save_path = os.path.join(args.output_dir, f"sd15-qwen25-checkpoint-st1-{global_step}")
 
                         if args.training_stage == 2:
                             save_path = save_path = os.path.join(args.output_dir, f"sd15-qwen25-checkpoint-st2-{global_step}")
 
                         accelerator.save_state(save_path)
-
+                        
+                        transformer_ = accelerator.unwrap_model(transformer)
                         if args.training_stage == 2:
-                            transformer_ = accelerator.unwrap_model(transformer)
                             unet_lora_state_dict = convert_state_dict_to_diffusers(
                                 get_peft_model_state_dict(transformer_.unet)
                             )
