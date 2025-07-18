@@ -648,7 +648,7 @@ def main(args):
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
     logger.info("***** Running training *****")
-    logger.info(f"  Num examples = {len(CntTrainDataset)}")
+    logger.info(f"  Num examples = {len(precomputed_dataset)}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
@@ -700,7 +700,7 @@ def main(args):
                 # We want to learn the denoising process w.r.t the edited images which
                 # are conditioned on the original image (which was edited) and the edit instruction.
                 # So, first, convert images to latent space.
-                latents = vae.encode(batch["edited_pixel_values"].to(weight_dtype)).latent_dist.sample()
+                latents = vae.encode(batch["edited_pixel_values"].squeeze(1).to(weight_dtype)).latent_dist.sample()
                 latents = latents * vae.config.scaling_factor
 
                 # Sample noise that we'll add to the latents
@@ -719,7 +719,7 @@ def main(args):
 
                 # Get the additional image embedding for conditioning.
                 # Instead of getting a diagonal Gaussian here, we simply take the mode.
-                original_image_embeds = vae.encode(batch["original_pixel_values"].to(weight_dtype)).latent_dist.mode()
+                original_image_embeds = vae.encode(batch["original_pixel_values"].squeeze(1).to(weight_dtype)).latent_dist.mode()
 
                 # Conditioning dropout to support classifier-free guidance during inference. For more details
                 # check out the section 3.2.1 of the original paper https://huggingface.co/papers/2211.09800.

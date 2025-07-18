@@ -864,12 +864,9 @@ def preprocess_images(orig_imgs, edit_imgs, args):
         ]
     )
 
-    original_images = np.concatenate(
-        [convert_to_np(image, args.resolution) for image in orig_imgs]
-    )
-    edited_images = np.concatenate(
-        [convert_to_np(image, args.resolution) for image in edit_imgs]
-    )
+    original_images = convert_to_np(orig_imgs, args.resolution)
+    edited_images = convert_to_np(edit_imgs, args.resolution)
+
     # We need to ensure that the original and the edited images undergo the same
     # augmentation transforms.
     images = np.stack([original_images, edited_images])
@@ -892,7 +889,7 @@ class CntTrainDataset(Dataset):
         # load dataset
         self.temp = temp
         self.args = args
-        self.tokenizer = tokenizer
+        self.txt_tokenizer = tokenizer
     
     def __getitem__(self, idx):
         # get the edited image
@@ -938,7 +935,7 @@ class CntTrainDataset(Dataset):
             for i in range(3):
                 obj_img = Image.open(os.path.join(self.args.backup, "temp_obj_"+str(i)+".jpg"))
                 obj_img_sz = obj_img.size
-                temp_img_mat_np[start_pts[i]:start_pts[i]+obj_img_sz[0], start_pts[i]:start_pts[i]+obj_img_sz[1], :] = obj_img
+                temp_img_mat_np[start_pts[i]:start_pts[i]+obj_img_sz[1], start_pts[i]:start_pts[i]+obj_img_sz[0], :] = obj_img
             
             orig_imgs = Image.fromarray(temp_img_mat_np)
         
@@ -949,6 +946,46 @@ class CntTrainDataset(Dataset):
             "orig_imgs": orig_imgs,
             "edit_imgs": edit_imgs,
             "filenames": os.path.join(self.args.dataset_name, self.temp["image"][idx])
+        }
+
+    def __len__(self):
+        return len(self.temp["prompt"])
+    
+
+class CntInferDataset(Dataset):
+    def __init__(self, temp, args):
+        # load dataset
+        self.temp = temp
+        self.args = args
+    
+    def __getitem__(self, idx):
+        # get the edited image
+        flag = 0
+
+        # get the original image
+        temp_img_mat_np = np.ones((512, 512, 3), dtype=np.uint8)*255
+        
+        # get the image objects
+        bbox_info = self.temp["object"][idx]
+        if len(bbox_info) > 0 and flag==0:
+            # get the prompt tokens
+            with torch.no_grad():
+                prompt_toks = "Reconstruct the image."
+
+            # process the bbox
+            gaps = [[256, 128], [256, 256], [128, 128]]
+            for idx, item in enumerate(bbox_info):
+                img_mat = Image.open(os.path.join(self.args.valid_path_name, item["img_pth"])).convert("RGB")
+                img_mat = img_mat.resize((100, 100), Image.LANCZOS)
+                img_mat_np = np.asarray(img_mat)
+
+                temp_img_mat_np[gaps[idx][0]-100: gaps[idx][0], gaps[idx][1]-100: gaps[idx][1], :] = img_mat_np
+
+            orig_imgs = Image.fromarray(temp_img_mat_np)
+        
+        return {
+            "prompt_embeds": prompt_toks,
+            "orig_imgs": orig_imgs,
         }
 
     def __len__(self):

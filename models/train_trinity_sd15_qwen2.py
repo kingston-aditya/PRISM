@@ -962,9 +962,9 @@ def main(args):
                 except Exception as e:
                     exception_flag = torch.tensor(1.0, device=accelerator.device)
                     accelerator.print(f"Process {accelerator.process_index} caught exception: {e}")
-                exception_flag = accelerator.reduce(exception_flag, reduction="sum")
+                exception_flag = accelerator.gather(exception_flag)
 
-                if exception_flag.item() > 0:
+                if torch.sum(exception_flag) > 0:
                     accelerator.print("Skipping step due to error in one or more processes.")
                     continue
 
@@ -990,12 +990,9 @@ def main(args):
                 # checking nan or inf block
                 nan_or_inf = torch.isnan(model_pred).any() or torch.isinf(model_pred).any()
                 nan_or_inf_tensor = torch.tensor(nan_or_inf, device=accelerator.device, dtype=torch.float32)
-                nan_or_inf_sum = accelerator.reduce(nan_or_inf_tensor, reduction="sum")
-                nan_or_inf_flag = nan_or_inf_sum.item() > 0
-                if nan_or_inf_flag:
-                    fil_names = batch["filenames"]
+                nan_or_inf_tensor_gathered = accelerator.gather(nan_or_inf_tensor)
+                if torch.sum(nan_or_inf_tensor_gathered) > 0:
                     accelerator.print(f"Model predictions going nan or inf at step {step}")
-                    accelerator.print(f"Filenames are {fil_names}")
                     continue
 
                 if args.snr_gamma is None:
@@ -1026,9 +1023,8 @@ def main(args):
                 # checking nan or inf block
                 nan_or_inf = torch.isnan(loss).any() or torch.isinf(loss).any()
                 nan_or_inf_tensor = torch.tensor(nan_or_inf, device=accelerator.device, dtype=torch.float32)
-                nan_or_inf_sum = accelerator.reduce(nan_or_inf_tensor, reduction="sum")
-                nan_or_inf_flag = nan_or_inf_sum.item() > 0
-                if nan_or_inf_flag:
+                nan_or_inf_sum = accelerator.gather(nan_or_inf_tensor)
+                if torch.sum(nan_or_inf_sum) > 0:
                     accelerator.print(f"Loss going nan or inf at step {step}")
                     continue
 
