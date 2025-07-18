@@ -851,4 +851,107 @@ class SD15_Qwen2_InferDataset(Dataset):
     def __len__(self):
         return len(self.temp["prompt"])
     
+def convert_to_np(image, resolution):
+    image = image.convert("RGB").resize((resolution, resolution))
+    return np.array(image).transpose(2, 0, 1)
+
+def preprocess_images(orig_imgs, edit_imgs, args):
+    # Preprocessing the datasets.
+    train_transforms = transforms.Compose(
+        [
+            transforms.CenterCrop(args.resolution) if args.center_crop else transforms.RandomCrop(args.resolution),
+            transforms.RandomHorizontalFlip() if args.random_flip else transforms.Lambda(lambda x: x),
+        ]
+    )
+
+    original_images = np.concatenate(
+        [convert_to_np(image, args.resolution) for image in orig_imgs]
+    )
+    edited_images = np.concatenate(
+        [convert_to_np(image, args.resolution) for image in edit_imgs]
+    )
+    # We need to ensure that the original and the edited images undergo the same
+    # augmentation transforms.
+    images = np.stack([original_images, edited_images])
+    images = torch.tensor(images)
+    images = 2 * (images / 255) - 1
+    return train_transforms(images)
+
+def preprocess_train(orig_imgs, edit_imgs, args):
+    # Preprocess images.
+    preprocessed_images = preprocess_images(orig_imgs, edit_imgs, args)
+
+    original_images, edited_images = preprocessed_images
+    original_images = original_images.reshape(-1, 3, args.resolution, args.resolution)
+    edited_images = edited_images.reshape(-1, 3, args.resolution, args.resolution)
+
+    return original_images, edited_images
+
+class CntTrainDataset(Dataset):
+    def __init__(self, temp, args, tokenizer):
+        # load dataset
+        self.temp = temp
+        self.args = args
+        self.tokenizer = tokenizer
+    
+    def __getitem__(self, idx):
+        # get the edited image
+        flag = 0
+        try:
+            edit_imgs = Image.open(os.path.join(self.args.dataset_name, self.temp["image"][idx])).convert("RGB")
+        except Exception as e:
+            flag = 1
+
+        # get the original image
+        temp_img_mat_np = np.ones((edit_imgs.size[0], edit_imgs.size[1], 3), dtype=np.uint8)*255
+        
+        # get the image objects
+        bbox_info = self.temp["object"][idx]
+        if len(bbox_info) > 0 and flag==0:
+            # get the prompt tokens
+            with torch.no_grad():
+                prompt_toks = self.txt_tokenizer("Edit the image as per the prompt: " + self.temp["prompt"][idx], padding="max_length", max_length=self.txt_tokenizer.model_max_length, truncation=True, return_tensors="pt")
+                prompt_toks = prompt_toks.input_ids
+
+            # process the bbox
+            for idx, item in enumerate(bbox_info):
+                x_min = int(item["xmin"])
+                x_max = int(item["xmax"])
+                y_min = int(item["ymin"])
+                y_max = int(item["ymax"])
+
+                if (x_max-x_min)*(y_max-y_min)>0 and y_max>y_min and x_max>x_min:
+                    temp_img_mat_np[y_min:y_max, x_min:x_max, :] = np.asarray(edit_imgs)[y_min:y_max, x_min:x_max, :]
+
+            orig_imgs = Image.fromarray(temp_img_mat_np)
+
+        if len(bbox_info) == 0 or flag==1:
+            edit_imgs = Image.open(os.path.join(self.args.backup, "temp_img.jpg")).convert("RGB")
+            temp_img_mat_np = np.ones((edit_imgs.size[0], edit_imgs.size[1], 3), dtype=np.uint8)*255
+            
+            # get the prompt tokens
+            with torch.no_grad():
+                prompt_toks = self.txt_tokenizer("Edit the image as per the prompt: A smiling woman with a pink umbrella stands in front of a \"WELCOME TO THE LAKE\" sign, with a serene lake and green trees in the background.", padding="max_length", max_length=self.txt_tokenizer.model_max_length, truncation=True, return_tensors="pt")
+                prompt_toks = prompt_toks.input_ids
+
+            start_pts = [0, edit_imgs.size[1]//4, edit_imgs.size[1]//2]
+            for i in range(3):
+                obj_img = Image.open(os.path.join(self.args.backup, "temp_obj_"+str(i)+".jpg"))
+                obj_img_sz = obj_img.size
+                temp_img_mat_np[start_pts[i]:start_pts[i]+obj_img_sz[0], start_pts[i]:start_pts[i]+obj_img_sz[1], :] = obj_img
+            
+            orig_imgs = Image.fromarray(temp_img_mat_np)
+        
+        orig_imgs, edit_imgs = preprocess_train(orig_imgs, edit_imgs, self.args)
+        
+        return {
+            "prompt_embeds": prompt_toks,
+            "orig_imgs": orig_imgs,
+            "edit_imgs": edit_imgs,
+            "filenames": os.path.join(self.args.dataset_name, self.temp["image"][idx])
+        }
+
+    def __len__(self):
+        return len(self.temp["prompt"])
+    
 

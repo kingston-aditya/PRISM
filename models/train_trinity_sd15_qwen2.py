@@ -954,14 +954,20 @@ def main(args):
                 else:
                     raise ValueError("Wrong training stage input !!!")
                 
+                # try-except distributed block
+                exception_flag = torch.tensor(0.0, device=accelerator.device)
                 try:
                     inputs = inputs.to(device=latents.device, dtype=weight_dtype)
                     inputs = {f"lmm_{k}": v for k, v in inputs.items()} 
                 except Exception as e:
-                    traceback.print_exc()
-                    print('input type caset exception ',e)
-                    print("batch info is", batch["filenames"])
+                    exception_flag = torch.tensor(1.0, device=accelerator.device)
+                    accelerator.print(f"Process {accelerator.process_index} caught exception: {e}")
+                exception_flag = accelerator.reduce(exception_flag, reduction="sum")
+
+                if exception_flag.item() > 0:
+                    accelerator.print("Skipping step due to error in one or more processes.")
                     continue
+
 
                 # Get the target for loss depending on the prediction type
                 if args.prediction_type is not None:
@@ -981,7 +987,12 @@ def main(args):
                 # pass it through transformer
                 model_pred = transformer(**inputs)
 
-                if torch.isnan(model_pred).any() or torch.isinf(model_pred).any():
+                # checking nan or inf block
+                nan_or_inf = torch.isnan(model_pred).any() or torch.isinf(model_pred).any()
+                nan_or_inf_tensor = torch.tensor(nan_or_inf, device=accelerator.device, dtype=torch.float32)
+                nan_or_inf_sum = accelerator.reduce(nan_or_inf_tensor, reduction="sum")
+                nan_or_inf_flag = nan_or_inf_sum.item() > 0
+                if nan_or_inf_flag:
                     fil_names = batch["filenames"]
                     accelerator.print(f"Model predictions going nan or inf at step {step}")
                     accelerator.print(f"Filenames are {fil_names}")
@@ -1012,10 +1023,13 @@ def main(args):
 
                 # Backpropagate
                 ## skip batch is corrupt
-                if torch.isnan(loss).any() or torch.isinf(loss).any():
-                    fil_names = batch["filenames"]
+                # checking nan or inf block
+                nan_or_inf = torch.isnan(loss).any() or torch.isinf(loss).any()
+                nan_or_inf_tensor = torch.tensor(nan_or_inf, device=accelerator.device, dtype=torch.float32)
+                nan_or_inf_sum = accelerator.reduce(nan_or_inf_tensor, reduction="sum")
+                nan_or_inf_flag = nan_or_inf_sum.item() > 0
+                if nan_or_inf_flag:
                     accelerator.print(f"Loss going nan or inf at step {step}")
-                    accelerator.print(f"Filenames are {fil_names}")
                     continue
 
                 accelerator.backward(loss)
