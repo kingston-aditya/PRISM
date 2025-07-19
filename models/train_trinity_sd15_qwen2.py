@@ -65,6 +65,22 @@ check_min_version("0.33.0.dev0")
 
 logger = get_logger(__name__, log_level="INFO")
 
+def load_latest_checkpoint(accelerator, args):
+    """Load the most recent checkpoint if available."""
+    all_pths = glob.glob(os.path.join(args.output_dir, "sd15-qwen25-checkpoint-st1-*"))
+
+    if len(all_pths) != 0:
+        path_name = sorted(final_pth, key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
+        accelerator.print(f"Loading checkpoint {path_name}")
+        accelerator.load_state(path_name)
+        try:
+            return int(path_name.split("-")[-1].split(".")[0])
+        except Exception:
+            return None
+    else:
+        accelerator.print("No checkpoint found for resumption")
+        return None
+        
 class ForkedPdb(pdb_original.Pdb):
     """A Pdb subclass that may be used
     from a forked multiprocessing child
@@ -993,6 +1009,7 @@ def main(args):
                 nan_or_inf_tensor_gathered = accelerator.gather(nan_or_inf_tensor)
                 if torch.sum(nan_or_inf_tensor_gathered) > 0:
                     accelerator.print(f"Model predictions going nan or inf at step {step}")
+                    load_latest_checkpoint(accelerator, args)
                     continue
 
                 if args.snr_gamma is None:
@@ -1026,6 +1043,7 @@ def main(args):
                 nan_or_inf_sum = accelerator.gather(nan_or_inf_tensor)
                 if torch.sum(nan_or_inf_sum) > 0:
                     accelerator.print(f"Loss going nan or inf at step {step}")
+                    load_latest_checkpoint(accelerator, args)
                     continue
 
                 accelerator.backward(loss)
