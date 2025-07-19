@@ -65,22 +65,6 @@ check_min_version("0.33.0.dev0")
 
 logger = get_logger(__name__, log_level="INFO")
 
-def load_latest_checkpoint(accelerator, args):
-    """Load the most recent checkpoint if available."""
-    all_pths = glob.glob(os.path.join(args.output_dir, "sd15-qwen25-checkpoint-st1-*"))
-
-    if len(all_pths) != 0:
-        path_name = sorted(final_pth, key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
-        accelerator.print(f"Loading checkpoint {path_name}")
-        accelerator.load_state(path_name)
-        try:
-            return int(path_name.split("-")[-1].split(".")[0])
-        except Exception:
-            return None
-    else:
-        accelerator.print("No checkpoint found for resumption")
-        return None
-        
 class ForkedPdb(pdb_original.Pdb):
     """A Pdb subclass that may be used
     from a forked multiprocessing child
@@ -559,6 +543,29 @@ def read_Trinity_dataset():
                     print(f"Failed to decode JSON for line: {line.strip()} with error: {e}")
     return json_obj
 
+def custom_clip_grad_norm_(parameters, max_norm, norm_type=2.0):
+    if isinstance(parameters, torch.Tensor):
+        parameters = [parameters]
+    parameters = [p for p in parameters if p.grad is not None]
+    max_norm = float(max_norm)
+    norm_type = float(norm_type)
+    if len(parameters) == 0:
+        return torch.tensor(0.)
+    device = parameters[0].grad.device
+    
+    total_norm = torch.norm(torch.stack([torch.norm(p.grad.detach(), norm_type).to(device) for p in parameters]), norm_type)
+    clip_coef = max_norm / (total_norm + 1e-6)
+
+    if torch.isnan(clip_coef).any() or torch.isinf(clip_coef).any():
+        raise ValueError("Gradients going nan !!!") 
+    
+    if clip_coef < 1:
+        for p in parameters:
+            p.grad.detach().mul_(clip_coef.to(p.grad.device))
+    
+    return torch.nn.utils.clip_grad_norm_(parameters, max_norm, norm_type)
+
+
 def main(args):
     logging_dir = Path(args.output_dir, args.logging_dir)
 
@@ -594,6 +601,9 @@ def main(args):
     # If passed along, set the training seed now.
     if args.seed is not None:
         set_seed(args.seed)
+
+    # modify the custom clip grad function
+    accelerator.clip_grad_norm_ = custom_clip_grad_norm_
 
     # Handle the repository creation
     if accelerator.is_main_process:
@@ -1009,7 +1019,6 @@ def main(args):
                 nan_or_inf_tensor_gathered = accelerator.gather(nan_or_inf_tensor)
                 if torch.sum(nan_or_inf_tensor_gathered) > 0:
                     accelerator.print(f"Model predictions going nan or inf at step {step}")
-                    load_latest_checkpoint(accelerator, args)
                     continue
 
                 if args.snr_gamma is None:
@@ -1043,13 +1052,25 @@ def main(args):
                 nan_or_inf_sum = accelerator.gather(nan_or_inf_tensor)
                 if torch.sum(nan_or_inf_sum) > 0:
                     accelerator.print(f"Loss going nan or inf at step {step}")
-                    load_latest_checkpoint(accelerator, args)
                     continue
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
                     params_to_clip = (transformer.parameters())
-                    accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
+
+                    # try-except distributed block
+                    exception_flag = torch.tensor(0.0, device=accelerator.device)
+                    try:
+                        accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
+                    except Exception as e:
+                        exception_flag = torch.tensor(1.0, device=accelerator.device)
+                        accelerator.print(f"Process {accelerator.process_index} caught exception: {e}")
+                    exception_flag = accelerator.gather(exception_flag)
+
+                    if torch.sum(exception_flag) > 0:
+                        accelerator.print("Skipping step due to error in one or more processes.")
+                        continue
+
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
