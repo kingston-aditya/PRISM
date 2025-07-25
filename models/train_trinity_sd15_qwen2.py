@@ -59,6 +59,7 @@ import glob, json
 import pdb as pdb_original
 from pipeline1 import EncoderModel
 from trinity_dataloader import SD15_Qwen2_TrainDataset
+from safetensors.torch import load_file
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.33.0.dev0")
@@ -764,9 +765,7 @@ def main(args):
     transformer.unet.requires_grad_(False)
 
     # Prepare everything with our `accelerator`.
-    transformer, train_dataloader, lr_scheduler = accelerator.prepare(
-        transformer, train_dataloader, lr_scheduler
-    )
+    train_dataloader, lr_scheduler = accelerator.prepare(train_dataloader, lr_scheduler)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -802,9 +801,12 @@ def main(args):
     # resume from checkpoint
     if args.resume_from_checkpoint == "latest":
         all_pths_2 = glob.glob(os.path.join(args.output_dir, "sd15-qwen25-checkpoint-st2-*"))
-        all_pths = glob.glob(os.path.join(args.output_dir, "sd15-qwen25-checkpoint-st1*"))
+        all_pths = glob.glob(os.path.join(args.output_dir, "sd15-qwen25-checkpoint-st1-*"))
 
-        final_pth = all_pths_2 if len(all_pths_2) != 0 else all_pths
+        if args.training_stage == 1:
+            final_pth = all_pths 
+        else:
+            final_pth = all_pths if len(all_pths_2)!=0 else all_pths_2
 
         if len(final_pth) != 0:
             path_name = sorted(final_pth, key=lambda x: int(x.split('-')[-1].split('.')[0]))[-1]
@@ -812,7 +814,12 @@ def main(args):
             input_dir = os.path.join(args.output_dir, path_name)
             
             # load the unet
-            accelerator.load_state(input_dir)
+            # load the transformer (lmm, unet, trinity, linear)
+            linear_weights = torch.load(os.path.join(input_dir, "proj_checkpoint.pt"))
+            trinity_weights = torch.load(os.path.join(input_dir, "trinity_checkpoint.pt"))
+
+            transformer.linear.load_state_dict(linear_weights)
+            transformer.trinity.load_state_dict(trinity_weights)
 
             global_step = int(path_name.split("-")[-1])
             initial_global_step = global_step
@@ -836,7 +843,7 @@ def main(args):
             target_modules=["to_k", "to_q", "to_v", "to_out.0"],
         )
 
-        transformer_ = accelerator.unwrap_model(transformer)
+        transformer_ = transformer
 
         # Add adapter and make sure the trainable params are in float32.
         transformer_.unet.add_adapter(unet_lora_config)
@@ -853,10 +860,14 @@ def main(args):
             eps=args.adam_epsilon,
         )
 
+        # wrap it with ddp
         transformer, optimizer = accelerator.prepare(transformer_, optimizer)
 
         initial_global_step = 0
-        first_epoch = 0
+        first_epoch = 0    
+    else:
+        # wrap it with ddp
+        transformer = accelerator.prepare(transformer)    
 
     progress_bar = tqdm(
         range(0, args.max_train_steps),
@@ -1087,9 +1098,10 @@ def main(args):
                         save_path = os.path.join(args.output_dir, f"sd15-qwen25-checkpoint-st1-{global_step}")
 
                         if args.training_stage == 2:
-                            save_path = save_path = os.path.join(args.output_dir, f"sd15-qwen25-checkpoint-st2-{global_step}")
-
-                        accelerator.save_state(save_path)
+                            save_path = os.path.join(args.output_dir, f"sd15-qwen25-checkpoint-st2-{global_step}")
+                        
+                        # create a new folder save_path
+                        os.makedirs(save_path, exist_ok=True)
                         
                         transformer_ = accelerator.unwrap_model(transformer)
                         if args.training_stage == 2:

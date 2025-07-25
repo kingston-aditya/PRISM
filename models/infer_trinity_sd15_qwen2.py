@@ -44,7 +44,7 @@ from transformers import Qwen2_5_VLForConditionalGeneration, AutoTokenizer, Auto
 from qwen_vl_utils import process_vision_info
 
 import sys
-sys.path.insert(1, "/nfshomes/asarkar6/aditya/PRISM/")
+sys.path.insert(1, "/nfshomes/asarkar6/aditya/PRISM2/")
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, DiffusionPipeline, StableDiffusionPipeline, UNet2DConditionModel
 from diffusers.optimization import get_scheduler
@@ -608,9 +608,6 @@ def main(args):
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
 
-    # Load the UNET
-    unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision, variant=args.variant, cache_dir=args.cache_dir)
-    unet.to(accelerator.device, dtype=weight_dtype)
 
     # Load the Qwen Model
     qwen25 = Qwen2_5_VLForConditionalGeneration.from_pretrained(args.pretrained_lmm_name, ignore_mismatched_sizes=True, cache_dir=args.cache_dir)
@@ -621,29 +618,18 @@ def main(args):
     trinity.to(accelerator.device, dtype=weight_dtype)
 
     # freeze parameters of models to save more memory
-    unet.requires_grad_(False)
     qwen25.requires_grad_(False)
     trinity.requires_grad_(False)
 
     # Load the transformer
-    transformer = QwenVL_SD15_pipeline(qwen25, unet, trinity)
+    transformer = QwenVL_SD15_pipeline(qwen25, trinity)
     transformer.requires_grad_(False)
-    del unet, qwen25, trinity
+
+    del qwen25, trinity
     transformer.to(accelerator.device, dtype=torch.float32)
 
     # Load the qwen 2.5 autoprocessor
     processor = AutoProcessor.from_pretrained(args.pretrained_lmm_name, max_pixels = 512*28*28)
-
-    # get the Lora Modules
-    unet_lora_config = LoraConfig(
-        r=args.rank,
-        lora_alpha=args.rank,
-        init_lora_weights="gaussian",
-        target_modules=["to_k", "to_q", "to_v", "to_out.0"],
-    )
-
-    # Add adapter and make sure the trainable params are in float32.
-    transformer.unet.add_adapter(unet_lora_config)
 
     def unwrap_model(model):
         model = accelerator.unwrap_model(model)
@@ -678,9 +664,6 @@ def main(args):
     transformer.trinity.requires_grad_(False)
     transformer.linear.requires_grad_(False)
 
-    # Prepare everything with our `accelerator`.
-    transformer= accelerator.prepare(transformer)
-
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
@@ -689,8 +672,6 @@ def main(args):
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
-    global_step = 0
-    first_epoch = 0
 
     # resume from checkpoint
     if args.resume_from_checkpoint == "latest":
@@ -707,7 +688,11 @@ def main(args):
             input_dir = os.path.join(args.output_dir, path_name)
             
             # load the transformer (lmm, unet, trinity, linear)
-            accelerator.load_state(input_dir)
+            linear_weights = torch.load(os.path.join(input_dir, "proj_checkpoint.pt"))
+            trinity_weights = torch.load(os.path.join(input_dir, "trinity_checkpoint.pt"))
+
+            transformer.linear.load_state_dict(linear_weights)
+            transformer.trinity.load_state_dict(trinity_weights)
         else:
             raise ValueError("Please give me a path name for loading weights!!")
         
@@ -717,10 +702,11 @@ def main(args):
             sd_model.load_lora_weights(os.path.join(args.output_dir, path_name))
         sd_model.set_progress_bar_config(disable=True)
 
+    # Prepare everything with our `accelerator`.
+    transformer= accelerator.prepare(transformer)
     transformer.eval()
 
     for step, batch in enumerate(tqdm(train_dataloader, desc="Inferring..")):
-
         # get the inputs for each model
         if args.training_stage == 1:
             # Ensure consistent R1 across all processes

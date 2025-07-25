@@ -1396,21 +1396,20 @@ class QwenVL_SD15_UNet2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOri
         return unet_model_pred
     
 class QwenVL_SD15_pipeline(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
-    def __init__(self, qwenvl_model, sd_unet, trinity, lmm_output_layer_index=-1, do_lmm_post_norm=False):
+    def __init__(self, qwenvl_model, trinity, lmm_output_layer_index=-1, do_lmm_post_norm=False):
         super().__init__()
 
         self.lmm = qwenvl_model
-        self.unet= sd_unet
         self.lmm_output_layer_index = lmm_output_layer_index
         self.do_lmm_post_norm = do_lmm_post_norm
         self.trinity = trinity
         self.norm_lmm_out = LlamaRMSNorm(self.lmm.config.hidden_size)
 
-        hidden_dim = self.unet.config.cross_attention_dim + (self.lmm.config.hidden_size - self.unet.config.cross_attention_dim)//2
+        hidden_dim = 768 + (self.lmm.config.hidden_size - 768)//2
         self.linear = nn.Sequential(
             nn.Linear(self.lmm.config.hidden_size, hidden_dim),
             nn.GELU(),
-            nn.Linear(hidden_dim, self.unet.config.cross_attention_dim)
+            nn.Linear(hidden_dim, 768)
         )
         self.max_length = 77
     
