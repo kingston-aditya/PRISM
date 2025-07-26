@@ -44,7 +44,7 @@ from transformers import Qwen2_5_VLForConditionalGeneration, AutoTokenizer, Auto
 from qwen_vl_utils import process_vision_info
 
 import sys
-sys.path.insert(1, "/nfshomes/asarkar6/aditya/PRISM2/")
+sys.path.insert(1, "/nfshomes/asarkar6/aditya/PRISM/")
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, DiffusionPipeline, StableDiffusionPipeline, UNet2DConditionModel
 from diffusers.optimization import get_scheduler
