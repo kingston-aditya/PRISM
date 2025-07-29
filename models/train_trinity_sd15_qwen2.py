@@ -45,7 +45,7 @@ from transformers import Qwen2_5_VLForConditionalGeneration, AutoTokenizer, Auto
 from qwen_vl_utils import process_vision_info
 
 import sys
-sys.path.insert(1, "/nfshomes/asarkar6/aditya/PRISM2/")
+sys.path.insert(1, "/home/saividyaranya/PRISM")
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, DiffusionPipeline, StableDiffusionPipeline, UNet2DConditionModel
 from diffusers.optimization import get_scheduler
@@ -530,8 +530,8 @@ def read_Trinity_dataset():
     # read multiple files
     json_obj = {"image":[], "prompt":[], "object":[]}
 
-    for name in glob.glob("/nfshomes/asarkar6/trinity/train_data/*.jsonl"):
-        with open(os.path.join("/nfshomes/asarkar6/trinity/train_data/", name), "r") as f:
+    for name in glob.glob("/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again/metadata2.jsonl"):
+        with open(os.path.join("/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again/", name), "r") as f:
             for line in f:
                 try:
                     temp = json.loads(line.strip())

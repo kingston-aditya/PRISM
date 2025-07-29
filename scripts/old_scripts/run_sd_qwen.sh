@@ -1,7 +1,7 @@
 accelerate launch --multi_gpu --main_process_port 29501 /data/home/saividyaranya/PRISM/models/train_trinity_sd15_qwen2.py \
   --pretrained_model_name_or_path="stable-diffusion-v1-5/stable-diffusion-v1-5" \
   --dataset_name="/data/home/saividyaranya/PRISM/cached_folder_real/images_again/" \
-  --output_dir="/home/saividyaranya/PRISM/all_output_logs/qwen" \
+  --output_dir="/home/saividyaranya/PRISM/all_output_logs/qwen2" \
   --cache_dir="/data/home/saividyaranya/PRISM/model_weights/" \
   --bg_dir="/data/home/saividyaranya/PRISM/backgrounds" \
   --backup="/data/home/saividyaranya/PRISM/backup/" \
@@ -21,6 +21,7 @@ accelerate launch --multi_gpu --main_process_port 29501 /data/home/saividyaranya
   --resolution=1024 \
   --lr_scheduler="cosine" \
   --lr_warmup_steps=0 \
+  --learning_rate=1e-6 \
   --use_8bit_adam \
   --num_train_epochs=40 \
   --checkpointing_steps=500 \
