@@ -44,7 +44,7 @@ from transformers import Qwen2_5_VLForConditionalGeneration, AutoTokenizer, Auto
 from qwen_vl_utils import process_vision_info
 
 import sys
-sys.path.insert(1, "/nfshomes/asarkar6/aditya/PRISM/")
+sys.path.insert(1, "/nfshomes/asarkar6/aditya/PRISM2/")
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, DiffusionPipeline, StableDiffusionPipeline, UNet2DConditionModel
 from diffusers.optimization import get_scheduler
@@ -261,6 +261,13 @@ def parse_args(input_args=None):
         type=str,
         default="/nfshomes/asarkar6/aditya/PRISM/backup/",
         help="The directory where the downloaded models and datasets will be stored.",
+    )
+
+    parser.add_argument(
+        "--wanna_trans",
+        type=int,
+        default=1,
+        help="0 for no transformer and 1 for a transformer",
     )
 
     parser.add_argument(
@@ -614,18 +621,24 @@ def main(args):
     qwen25.to(accelerator.device, dtype=weight_dtype)
 
     # Load the trinity
-    trinity = EncoderModel(qwen25.config.hidden_size, qwen25.config.hidden_size, num_blocks=args.blocks)
-    trinity.to(accelerator.device, dtype=weight_dtype)
+    if args.wanna_trans == 1:
+        trinity = EncoderModel(qwen25.config.hidden_size, qwen25.config.hidden_size, num_blocks=args.blocks)
+        trinity.to(accelerator.device, dtype=weight_dtype)
+        trinity.requires_grad_(False)
 
     # freeze parameters of models to save more memory
     qwen25.requires_grad_(False)
-    trinity.requires_grad_(False)
 
     # Load the transformer
-    transformer = QwenVL_SD15_pipeline(qwen25, trinity)
+    if args.wanna_trans == 1:
+        transformer = QwenVL_SD15_pipeline(qwen25, trinity)
+        del trinity
+    else:
+        transformer = QwenVL_SD15_pipeline(qwen25, trinity=None)
+    
     transformer.requires_grad_(False)
 
-    del qwen25, trinity
+    del qwen25
     transformer.to(accelerator.device, dtype=torch.float32)
 
     # Load the qwen 2.5 autoprocessor
@@ -661,7 +674,9 @@ def main(args):
         num_workers=args.dataloader_num_workers,
     )
 
-    transformer.trinity.requires_grad_(False)
+    if args.wanna_trans == 1:
+        transformer.trinity.requires_grad_(False)
+
     transformer.linear.requires_grad_(False)
 
     # Train!
@@ -689,10 +704,11 @@ def main(args):
             
             # load the transformer (lmm, unet, trinity, linear)
             linear_weights = torch.load(os.path.join(input_dir, "proj_checkpoint.pt"))
-            trinity_weights = torch.load(os.path.join(input_dir, "trinity_checkpoint.pt"))
-
             transformer.linear.load_state_dict(linear_weights)
-            transformer.trinity.load_state_dict(trinity_weights)
+
+            if args.wanna_trans == 1:
+                trinity_weights = torch.load(os.path.join(input_dir, "trinity_checkpoint.pt"))
+                transformer.trinity.load_state_dict(trinity_weights)
         else:
             raise ValueError("Please give me a path name for loading weights!!")
         

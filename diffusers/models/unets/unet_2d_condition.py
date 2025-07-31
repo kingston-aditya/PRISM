@@ -1348,7 +1348,7 @@ class LlamaRMSNorm(nn.Module):
 
 
 class QwenVL_SD15_UNet2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
-    def __init__(self, qwenvl_model, sd_unet, trinity, mlp_dim=4096, lmm_output_layer_index=-1, do_lmm_post_norm=False):
+    def __init__(self, qwenvl_model, sd_unet, trinity=None, lmm_output_layer_index=-1, do_lmm_post_norm=False):
         super().__init__()
 
         self.lmm = qwenvl_model
@@ -1384,8 +1384,12 @@ class QwenVL_SD15_UNet2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOri
 
         # align layer
         lmm_outputs_last_hidden_state = lmm_outputs_last_hidden_state[:, :self.max_length, :]
-        encoder_hidden_states_proj = self.trinity(lmm_outputs_last_hidden_state, lmm_outputs_last_hidden_state, 0, 0, typ="no_mask")
-        encoder_hidden_states_proj = self.linear(encoder_hidden_states_proj)
+        
+        # check if trinity 
+        if self.trinity is not None:
+            lmm_outputs_last_hidden_state = self.trinity(lmm_outputs_last_hidden_state, lmm_outputs_last_hidden_state, 0, 0, typ="no_mask")
+        
+        encoder_hidden_states_proj = self.linear(lmm_outputs_last_hidden_state)
 
         unet_model_pred = self.unet(
                         sample=unet_hidden_states,
@@ -1396,7 +1400,7 @@ class QwenVL_SD15_UNet2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOri
         return unet_model_pred
     
 class QwenVL_SD15_pipeline(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
-    def __init__(self, qwenvl_model, trinity, lmm_output_layer_index=-1, do_lmm_post_norm=False):
+    def __init__(self, qwenvl_model, trinity=None, lmm_output_layer_index=-1, do_lmm_post_norm=False):
         super().__init__()
 
         self.lmm = qwenvl_model
@@ -1434,7 +1438,12 @@ class QwenVL_SD15_pipeline(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigin
 
         # align layer
         lmm_outputs_last_hidden_state = lmm_outputs_last_hidden_state[:, :self.max_length, :]
-        encoder_hidden_states_proj = self.trinity(lmm_outputs_last_hidden_state, lmm_outputs_last_hidden_state, 0, 0, typ="no_mask")
-        encoder_hidden_states_proj = self.linear(encoder_hidden_states_proj)
+
+        # get the trinity outputs
+        if self.trinity is not None:
+            lmm_outputs_last_hidden_state = self.trinity(lmm_outputs_last_hidden_state, lmm_outputs_last_hidden_state, 0, 0, typ="no_mask")
+        
+        # get the linear layer outputs
+        encoder_hidden_states_proj = self.linear(lmm_outputs_last_hidden_state)
 
         return encoder_hidden_states_proj

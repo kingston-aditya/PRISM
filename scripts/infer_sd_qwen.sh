@@ -7,7 +7,8 @@ accelerate launch --multi_gpu /nfshomes/asarkar6/aditya/PRISM/models/infer_trini
   --backup="/nfshomes/asarkar6/aditya/PRISM/backup/" \
   --output_img_dir="/nfshomes/asarkar6/aditya/gen_images/" \
   --image_or_prompt=1 \
-  --training_stage=2 \
+  --training_stage=1 \
+  --wanna_trans=0 \
   --resume_from_checkpoint="latest" \
   --wanna_bg=1 \
   --do_valid="True" \

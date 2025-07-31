@@ -8,6 +8,7 @@ accelerate launch --multi_gpu --main_process_port 29501 /data/home/saividyaranya
   --training_stage=1 \
   --resume_from_checkpoint="latest" \
   --wanna_bg=1 \
+  --wanna_trans=0 \
   --do_valid="True" \
   --valid_path_name="/data/home/saividyaranya/PRISM/validation/" \
   --caption_column="prompt" \

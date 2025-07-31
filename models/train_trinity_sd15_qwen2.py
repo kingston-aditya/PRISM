@@ -45,7 +45,7 @@ from transformers import Qwen2_5_VLForConditionalGeneration, AutoTokenizer, Auto
 from qwen_vl_utils import process_vision_info
 
 import sys
-sys.path.insert(1, "/nfshomes/asarkar6/aditya/PRISM/")
+sys.path.insert(1, "/nfshomes/asarkar6/aditya/PRISM2/")
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, DiffusionPipeline, StableDiffusionPipeline, UNet2DConditionModel
 from diffusers.optimization import get_scheduler
@@ -141,6 +141,15 @@ def parse_args(input_args=None):
         default=0,
         help=(
             "Do you wanna bg in training?"
+        ),
+    )
+
+    parser.add_argument(
+        "--wanna_trans",
+        type=int,
+        default=1,
+        help=(
+            "0 for having a not having transformer and 1 for having one."
         ),
     )
 
@@ -633,18 +642,24 @@ def main(args):
     qwen25.to(accelerator.device, dtype=weight_dtype)
 
     # Load the trinity
-    trinity = EncoderModel(qwen25.config.hidden_size, qwen25.config.hidden_size, num_blocks=args.blocks)
-    trinity.to(accelerator.device, dtype=weight_dtype)
+    if args.wanna_trans == 1:
+        trinity = EncoderModel(qwen25.config.hidden_size, qwen25.config.hidden_size, num_blocks=args.blocks)
+        trinity.to(accelerator.device, dtype=weight_dtype)
+        trinity.requires_grad_(False)
 
     # freeze parameters of models to save more memory
     unet.requires_grad_(False)
     qwen25.requires_grad_(False)
-    trinity.requires_grad_(False)
-
+    
     # Load the transformer
-    transformer = QwenVL_SD15_UNet2DModel(qwen25, unet, trinity)
+    if args.wanna_trans == 1:
+        transformer = QwenVL_SD15_UNet2DModel(qwen25, unet, trinity)
+        del trinity
+    else:
+        transformer = QwenVL_SD15_UNet2DModel(qwen25, unet, trinity=None)
+
     transformer.requires_grad_(False)
-    del unet, qwen25, trinity
+    del unet, qwen25
     transformer.to(accelerator.device, dtype=torch.float32)
 
     # Load scheduler
@@ -659,10 +674,12 @@ def main(args):
     processor = AutoProcessor.from_pretrained(args.pretrained_lmm_name, max_pixels = 512*28*28)
         
     if args.mixed_precision == "fp16":
-        models = [transformer.unet, transformer.trinity, transformer.linear]
+        if args.wanna_trans == 1:
+            models = [transformer.unet, transformer.trinity, transformer.linear]
+        else:
+            models = [transformer.unet, transformer.linear]
+        
         # only upcast trainable parameters (LoRA) into fp32
-        # cast_training_params(models, dtype=torch.float32)
-
         for m in models:
             for param in m.parameters():
                 if param.requires_grad:
@@ -695,7 +712,10 @@ def main(args):
     else:
         optimizer_cls = torch.optim.AdamW
 
-    params_to_optimize = list(transformer.trinity.parameters()) + list(transformer.linear.parameters())
+    if args.wanna_trans == 1:
+        params_to_optimize = list(transformer.trinity.parameters()) + list(transformer.linear.parameters())
+    else:
+        params_to_optimize = list(transformer.linear.parameters())
     
     optimizer = optimizer_cls(
         params_to_optimize,
@@ -760,7 +780,9 @@ def main(args):
     )
 
     # Decide which layers to train 
-    transformer.trinity.requires_grad_(True)
+    if args.wanna_trans == 1:
+        transformer.trinity.requires_grad_(True)
+
     transformer.linear.requires_grad_(True)
     transformer.unet.requires_grad_(False)
 
@@ -816,11 +838,13 @@ def main(args):
             # load the unet
             # load the transformer (lmm, unet, trinity, linear)
             linear_weights = torch.load(os.path.join(input_dir, "proj_checkpoint.pt"))
-            trinity_weights = torch.load(os.path.join(input_dir, "trinity_checkpoint.pt"))
+
+            if args.wanna_trans == 1:
+                trinity_weights = torch.load(os.path.join(input_dir, "trinity_checkpoint.pt"))
+                transformer.trinity.load_state_dict(trinity_weights)
 
             transformer.linear.load_state_dict(linear_weights)
-            transformer.trinity.load_state_dict(trinity_weights)
-
+            
             global_step = int(path_name.split("-")[-1])
             initial_global_step = global_step
             first_epoch = global_step // num_update_steps_per_epoch
@@ -945,7 +969,7 @@ def main(args):
                                 {
                                     "type": "image",
                                     "image": img
-                                } for img in img_list] + [{"type": "text", "text": "Explain an image in detail with above objects."}]
+                                } for img in img_list] + [{"type": "text", "text": "Explain an image in detail with above object."}]
                             }] for img_list in batch["object_prompt_embeds"]
                         ]
 
@@ -1117,7 +1141,9 @@ def main(args):
 
                         # save these layers for safety
                         torch.save(transformer_.linear.state_dict(), os.path.join(save_path, "proj_checkpoint"+".pt"))
-                        torch.save(transformer_.trinity.state_dict(), os.path.join(save_path, "trinity_checkpoint"+".pt"))
+
+                        if args.wanna_trans == 1:
+                            torch.save(transformer_.trinity.state_dict(), os.path.join(save_path, "trinity_checkpoint"+".pt"))
 
                         logger.info(f"Saved state to {save_path}")
 
