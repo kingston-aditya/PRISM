@@ -35,6 +35,21 @@ PIL.Image.MAX_IMAGE_PIXELS = None
 PngImagePlugin.MAX_TEXT_CHUNK = 100 * (1024**2)
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+import sys
+import pdb as pdb_original
+
+class ForkedPdb(pdb_original.Pdb):
+    """A Pdb subclass that may be used
+    from a forked multiprocessing child
+    """
+    def interaction(self, *args, **kwargs):
+        _stdin = sys.stdin
+        try:
+            sys.stdin = open('/dev/stdin')
+            pdb_original.Pdb.interaction(self, *args, **kwargs)
+        finally:
+            sys.stdin = _stdin
+
 
 @dataclass
 class OverrideArguments:
@@ -45,6 +60,7 @@ class OverrideArguments:
 class ModelArguments:
     _gradient_checkpointing: bool = True
     vae_id: str = "Efficient-Large-Model/Sana_1600M_512px_diffusers"
+    cache_dir: str = "/nfshomes/asarkar6/trinity/model_weights/"
     in_channels: int = 32
     vae_downsample_f: int = 32
     noise_scheduler_id: str = "Efficient-Large-Model/Sana_1600M_512px_diffusers"
@@ -75,14 +91,15 @@ class DataArguments:
 
 @dataclass
 class TrainingArguments(transformers.TrainingArguments):
-    base_dir: str = "/path/to/base_dir"
-    output_dir: str = "output"
-    data_dir: str = ".cache"
+    base_dir: str = "/nfshomes/asarkar6/scratch/test_image/"
+    logging_dir: str = "logs"
+    output_dir: str = "/nfshomes/asarkar6/trinity/model_weights/"
+    data_dir: str = "/nfshomes/asarkar6/trinity/train_data/"
     eval_on_start: bool = True
     eval_strategy: str = "steps"
     eval_steps: int = 1000
     eval_delay: int = 0
-    per_device_train_batch_size: int = 32
+    per_device_train_batch_size: int = 2
     per_device_eval_batch_size: int = 1
     gradient_accumulation_steps: int = 1
     optim: str = "adamw_torch"
@@ -109,7 +126,7 @@ class TrainingArguments(transformers.TrainingArguments):
     dataloader_pin_memory: bool = True
     dataloader_drop_last: bool = True
     remove_unused_columns: bool = False
-    run_name: str = "test"
+    run_name: str = "train"
     report_to: str = "wandb"
     ddp_find_unused_parameters: bool = False
     overwrite_output_dir: bool = False

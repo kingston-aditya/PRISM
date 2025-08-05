@@ -14,6 +14,25 @@ from torchvision.transforms import v2
 import random
 from torch.utils.data.dataset import ConcatDataset
 from functools import partial
+import numpy as np
+
+import sys
+import pdb as pdb_original
+
+# global variables
+BACKUP_PATH = os.path.join("/nfshomes/asarkar6/aditya/PRISM/", "backup")
+
+class ForkedPdb(pdb_original.Pdb):
+    """A Pdb subclass that may be used
+    from a forked multiprocessing child
+    """
+    def interaction(self, *args, **kwargs):
+        _stdin = sys.stdin
+        try:
+            sys.stdin = open('/dev/stdin')
+            pdb_original.Pdb.interaction(self, *args, **kwargs)
+        finally:
+            sys.stdin = _stdin
 
 
 def delete_keys_except(batch, except_keys):
@@ -37,6 +56,17 @@ def create_object_images(bbox_info, img_mat):
             raise ValueError("The object image size is invalid.")
 
     return obj_img_lst
+
+def create_dummy_objects(num_objs=3):
+    caption = "A smiling woman with a pink umbrella stands in front of a sign, with a serene lake and green trees in the background."
+    target_img = PIL.Image.open(os.path.join(BACKUP_PATH, "temp_img.jpg")).convert("RGB")
+
+    obj_img_lst = []
+    for idx in range(num_objs):
+        obj_img_lst.append(PIL.Image.open(os.path.join(BACKUP_PATH, "temp_obj_"+str(idx)+".jpg")).convert("RGB"))
+
+    return caption, target_img, obj_img_lst
+
 
 def _i2i_process_fn(batch, target_transform):
     images = batch["image"]
@@ -202,6 +232,7 @@ def _trinity_process_fn(batch, target_transform):
     captions = batch["caption"]
 
     for i in range(len(target_images)):
+        flag = 0
         try:
             # try to load the image
             target_images[i] = PIL.Image.open(
@@ -210,19 +241,23 @@ def _trinity_process_fn(batch, target_transform):
                 else target_images[i]["path"]
             ).convert("RGB")
 
-            object_images[i] = create_object_images(object_images[i], target_images[i]) if len(object_images[i]) > 0 else None
+            if len(object_images[i]) > 0:
+                object_images[i] = create_object_images(object_images[i], target_images[i])  
+            else:
+                flag=1
         except:
             print("Going into except block.")
-            target_images[i] = None
-            captions[i] = ""
-            object_images[i] = None
+            flag = 1
+        
+        if flag == 1:
+            captions[i], target_images[i], object_images[i] = create_dummy_objects()
 
     batch["target"] = [
         target_transform(image) if image is not None else None
         for image in target_images
     ]
-    batch["caption"] = [item[1:-1] for item in captions]
-    batch["input_images"] = [target_transform(image) if image is not None else None for item in object_images for image in item]
+    batch["caption"] = [item for item in captions]
+    batch["input_images"] = [{idx: target_transform(image) if image is not None else None for idx, image in enumerate(item)}  for item in object_images]
 
     delete_keys_except(batch, ["target", "input_images", "caption"])
     return batch
@@ -244,7 +279,7 @@ def trinity_eval_process_fn(batch):
 
     for i in range(len(object_images)):
         try:
-            object_images[i] = create_object_images(object_images[i], target_images[i]) if len(object_images[i]) > 0 else None
+            object_images[i] = create_object_images(object_images[i], target_images[i]) if len(object_images[i]) > 0 else [None]
         except:
             print("Going into except block.")
             captions[i] = ""
@@ -263,22 +298,24 @@ def _collate_fn(batch, tokenize_func, tokenizer):
 
     # input_images will be a list of list of object images
     input_images = [
-        example["input_images"] if "input_images" in example else None
+        list(example["input_images"].values()) if "input_images" in example and example["input_images"][0] is not None else None
         for example in batch
     ]
 
-    if any(input_images):
+    captions = [example["caption"] for example in batch]
+
+    if len(input_images) > 0 and all(x is not None for x in input_images):
         (
             return_dict["input_ids"],
             return_dict["attention_mask"],
             return_dict["pixel_values"],
             return_dict["image_sizes"],
         ) = tokenize_func(
-            tokenizer, [example["caption"] for example in batch], input_images
+            tokenizer, captions, input_images
         )
     else:
         return_dict["input_ids"], return_dict["attention_mask"] = tokenize_func(
-            tokenizer, [example["caption"] for example in batch]
+            tokenizer, captions
         )
     return return_dict
     # returns input_ids, attention_mask, pixel_values, image_sizes
@@ -423,7 +460,7 @@ def get_train_datasets(data_args, training_args, model_args, tokenize_func, toke
         train_dataset = train_dataset.rename_column("prompt", "caption")
 
         # add the prefix if its not there.
-        train_dataset = train_dataset.map(lambda example: {"target_image": os.path.join(data_args.data_dir, example["target_image"])})
+        train_dataset = train_dataset.map(lambda example: {"target_image": os.path.join(training_args.data_dir, example["target_image"])})
 
         train_datasets["trinity"] = train_dataset
 
@@ -432,8 +469,8 @@ def get_train_datasets(data_args, training_args, model_args, tokenize_func, toke
             v2.Resize(data_args.target_image_size),
             v2.CenterCrop(data_args.target_image_size),
             v2.ToImage(),
-            v2.ToDtype(torch.float32, scale=True),
-            v2.Normalize([0.5], [0.5]),
+            v2.ToDtype(torch.float32, scale=False),
+            # v2.Normalize([0.5], [0.5]),
         ]
     )
 
@@ -512,12 +549,14 @@ def get_train_datasets(data_args, training_args, model_args, tokenize_func, toke
             )
             train_datasets[dataset_name].set_transform(editing_process_fn)
         elif dataset_name in ["trinity"]:
-            train_dataset[dataset_name] = train_dataset[dataset_name].cast_column(
+            train_datasets[dataset_name] = train_datasets[dataset_name].cast_column(
                 "target_image", Image(decode=False)
             )
-            train_dataset[dataset_name].set_transform(trinity_process_fn)
+            train_datasets[dataset_name].set_transform(trinity_process_fn)
         else:
             raise ValueError(f"Unknown dataset: {dataset_name}")
+        
+        # shuffle the dataset
         train_datasets[dataset_name] = train_datasets[dataset_name].shuffle(
             seed=training_args.data_seed
         )
