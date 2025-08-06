@@ -60,7 +60,7 @@ class OverrideArguments:
 class ModelArguments:
     _gradient_checkpointing: bool = True
     vae_id: str = "Efficient-Large-Model/Sana_1600M_512px_diffusers"
-    cache_dir: str = "/nfshomes/asarkar6/trinity/model_weights/"
+    cache_dir: str = "/data/home/saividyaranya/PRISM/model_weights/"
     in_channels: int = 32
     vae_downsample_f: int = 32
     noise_scheduler_id: str = "Efficient-Large-Model/Sana_1600M_512px_diffusers"
@@ -93,8 +93,8 @@ class DataArguments:
 class TrainingArguments(transformers.TrainingArguments):
     base_dir: str = "/nfshomes/asarkar6/scratch/test_image/"
     logging_dir: str = "logs"
-    output_dir: str = "/nfshomes/asarkar6/trinity/model_weights/"
-    data_dir: str = "/nfshomes/asarkar6/trinity/train_data/"
+    output_dir: str = "/home/saividyaranya/PRISM/all_output_logs/mquery"
+    data_dir: str = "/data/home/saividyaranya/PRISM/cached_folder_real/metadata_folder_again/"
     eval_on_start: bool = True
     eval_strategy: str = "steps"
     eval_steps: int = 1000
