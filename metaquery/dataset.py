@@ -51,7 +51,10 @@ def create_object_images(bbox_info, img_mat):
 
         if (x_max-x_min)*(y_max-y_min)>0 and y_max>y_min and x_max>x_min:
             obj_img = np.asarray(img_mat)[y_min:y_max, x_min:x_max]
-            obj_img_lst.append(PIL.Image.fromarray(obj_img).convert("RGB"))
+            if obj_img.shape[0]==0 or obj_img.shape[1]==0 or obj_img.shape[2]!=3:
+                raise ValueError("The object image size is invalid.")
+            else:
+                obj_img_lst.append(PIL.Image.fromarray(obj_img).convert("RGB"))
         else:
             raise ValueError("The object image size is invalid.")
 
@@ -251,8 +254,8 @@ def _trinity_process_fn(batch, target_transform):
                 else target_images[i]["path"]
             ).convert("RGB")
             if len(object_images[i]) > 0:
-                object_images[i] = create_object_images(object_images[i], target_images[i])
                 try:
+                    object_images[i] = create_object_images(object_images[i], target_images[i])
                     # Test target_transform and store result
                     transformed_objects[i] = {idx: target_transform(image) if image is not None else None for idx, image in enumerate(object_images[i])}
                 except:
