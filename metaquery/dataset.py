@@ -231,37 +231,64 @@ def _trinity_process_fn(batch, target_transform):
     object_images = batch["object_image"]
     captions = batch["caption"]
 
-    for i in range(len(target_images)):
+    # Validate that all lists have the same length
+    if not (len(target_images) == len(object_images) == len(captions)):
+        min_length = min(len(target_images), len(object_images), len(captions))
+        print(f"Warning: Mismatched lengths detected: target_images={len(target_images)}, object_images={len(object_images)}, captions={len(captions)}. Truncating to {min_length}.")
+        target_images = target_images[:min_length]
+        object_images = object_images[:min_length]
+        captions = captions[:min_length]
+
+    batch_size = len(target_images)
+    transformed_objects = [None] * batch_size  # Store transformed images
+
+    for i in range(batch_size):
         flag = 0
         try:
-            # try to load the image
             target_images[i] = PIL.Image.open(
                 io.BytesIO(target_images[i]["bytes"])
                 if target_images[i]["bytes"] is not None
                 else target_images[i]["path"]
             ).convert("RGB")
-
             if len(object_images[i]) > 0:
-                object_images[i] = create_object_images(object_images[i], target_images[i])  
+                object_images[i] = create_object_images(object_images[i], target_images[i])
+                try:
+                    # Test target_transform and store result
+                    transformed_objects[i] = {idx: target_transform(image) if image is not None else None for idx, image in enumerate(object_images[i])}
+                except:
+                    print(f"Target transform failed for object_images[{i}].")
+                    flag = 1
             else:
-                flag=1
+                flag = 1
         except:
-            print("Going into except block.")
+            print(f"Going into except block for image loading or object creation at index {i}.")
             flag = 1
         
         if flag == 1:
             captions[i], target_images[i], object_images[i] = create_dummy_objects()
+            transformed_objects[i] = None  # Reset transformed objects for dummy data
 
-    batch["target"] = [
-        target_transform(image) if image is not None else None
-        for image in target_images
-    ]
+    batch["target"] = [target_transform(image) if image is not None else None for image in target_images]
     batch["caption"] = [item for item in captions]
-    batch["input_images"] = [{idx: target_transform(image) if image is not None else None for idx, image in enumerate(item)}  for item in object_images]
+    try:
+        batch["input_images"] = [
+            transformed_objects[i] if transformed_objects[i] is not None else
+            {idx: target_transform(image) if image is not None else None for idx, image in enumerate(item)}
+            for i, item in enumerate(object_images)
+        ]
+    except:
+        print("Going into except block for input_images transform.")
+        for i in range(batch_size):
+            if transformed_objects[i] is None and any(image is None or not isinstance(image, PIL.Image.Image) for image in object_images[i]):
+                captions[i], target_images[i], object_images[i] = create_dummy_objects()
+                transformed_objects[i] = None
+        batch["target"] = [target_transform(image) if image is not None else None for image in target_images]
+        batch["caption"] = [item for item in captions]
+        batch["input_images"] = [{idx: image for idx, image in enumerate(item)} for item in object_images]
 
     delete_keys_except(batch, ["target", "input_images", "caption"])
     return batch
-
+    
 def editing_eval_process_fn(batch):
     source_images = batch["source_image"]
     captions = batch["caption"]
