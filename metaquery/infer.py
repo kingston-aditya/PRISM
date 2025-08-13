@@ -90,9 +90,12 @@ def main(args):
     for i in tqdm(range(0, len(dataset), args.batch_size)):
         data = dataset[i : i + args.batch_size]
         prompt = data["caption"]
-        obj_images = create_objects(args, data["object_images"])
 
-        images = sample_fn(pipeline, prompt, obj_images, args)
+        if args.inference_type == 2:
+            obj_images = create_objects(args, data["object_images"])
+            images = sample_fn(pipeline, prompt, obj_images, args)
+        else:
+            images = sample_fn(pipeline, prompt, args)
 
         for j, image in enumerate(images):
             image.save(f"{args.output_dir}/{args.start_idx+i+j:05d}.png")
@@ -110,5 +113,8 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--num_inference_steps", type=int, default=30)
     parser.add_argument("--seed", type=int, default=42)
+
+    # 1 for prompt only inference, 2 for object images + prompt inference
+    parser.add_argument("--inference_type", type=int, default=2)
     args = parser.parse_args()
     main(args)

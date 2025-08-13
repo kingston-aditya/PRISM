@@ -5,4 +5,5 @@ checkpoint_dir="/nfshomes/asarkar6/trinity/model_weights/train/"
 OMP_NUM_THREADS=12 torchrun --nproc-per-node=2 --master-port=29501 /nfshomes/asarkar6/aditya/PRISM/metaquery/infer.py \
  --dataset_folder=$dataset_folder \
  --output_dir=$output_dir \
- --checkpoint_path=$checkpoint_dir
+ --checkpoint_path=$checkpoint_dir \
+ --inference_type=2

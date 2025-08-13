@@ -229,7 +229,7 @@ def _editing_process_fn(batch, target_transform, ground_truth_transform):
     delete_keys_except(batch, ["target", "input_images", "caption"])
     return batch
 
-def _trinity_process_fn(batch, target_transform):
+def _trinity_process_fn(batch, target_transform, stage=2):
     target_images = batch["target_image"]
     object_images = batch["object_image"]
     captions = batch["caption"]
@@ -253,16 +253,19 @@ def _trinity_process_fn(batch, target_transform):
                 if target_images[i]["bytes"] is not None
                 else target_images[i]["path"]
             ).convert("RGB")
-            if len(object_images[i]) > 0:
-                try:
-                    object_images[i] = create_object_images(object_images[i], target_images[i])
-                    # Test target_transform and store result
-                    transformed_objects[i] = {idx: target_transform(image) if image is not None else None for idx, image in enumerate(object_images[i])}
-                except:
-                    print(f"Target transform failed for object_images[{i}].")
+            if stage == 2:
+                if len(object_images[i]) > 0:
+                    try:
+                        object_images[i] = create_object_images(object_images[i], target_images[i])
+                        # Test target_transform and store result
+                        transformed_objects[i] = {idx: target_transform(image) if image is not None else None for idx, image in enumerate(object_images[i])}
+                    except:
+                        print(f"Target transform failed for object_images[{i}].")
+                        flag = 1
+                else:
                     flag = 1
             else:
-                flag = 1
+                flag = 0
         except:
             print(f"Going into except block for image loading or object creation at index {i}.")
             flag = 1
@@ -273,23 +276,27 @@ def _trinity_process_fn(batch, target_transform):
 
     batch["target"] = [target_transform(image) if image is not None else None for image in target_images]
     batch["caption"] = [item for item in captions]
-    try:
-        batch["input_images"] = [
-            transformed_objects[i] if transformed_objects[i] is not None else
-            {idx: target_transform(image) if image is not None else None for idx, image in enumerate(item)}
-            for i, item in enumerate(object_images)
-        ]
-    except:
-        print("Going into except block for input_images transform.")
-        for i in range(batch_size):
-            if transformed_objects[i] is None and any(image is None or not isinstance(image, PIL.Image.Image) for image in object_images[i]):
-                captions[i], target_images[i], object_images[i] = create_dummy_objects()
-                transformed_objects[i] = None
-        batch["target"] = [target_transform(image) if image is not None else None for image in target_images]
-        batch["caption"] = [item for item in captions]
-        batch["input_images"] = [{idx: image for idx, image in enumerate(item)} for item in object_images]
 
-    delete_keys_except(batch, ["target", "input_images", "caption"])
+    if stage == 2:
+        try:
+            batch["input_images"] = [
+                transformed_objects[i] if transformed_objects[i] is not None else
+                {idx: target_transform(image) if image is not None else None for idx, image in enumerate(item)}
+                for i, item in enumerate(object_images)
+            ]
+        except:
+            print("Going into except block for input_images transform.")
+            for i in range(batch_size):
+                if transformed_objects[i] is None and any(image is None or not isinstance(image, PIL.Image.Image) for image in object_images[i]):
+                    captions[i], target_images[i], object_images[i] = create_dummy_objects()
+                    transformed_objects[i] = None
+            batch["target"] = [target_transform(image) if image is not None else None for image in target_images]
+            batch["caption"] = [item for item in captions]
+            batch["input_images"] = [{idx: image for idx, image in enumerate(item)} for item in object_images]
+
+        delete_keys_except(batch, ["target", "input_images", "caption"])
+    else:
+        delete_keys_except(batch, ["target", "caption"])
     return batch
     # returns batch["target", "input_images", "caption"]
     
@@ -324,33 +331,40 @@ def trinity_eval_process_fn(batch):
     delete_keys_except(batch, ["input_images", "caption"])
     return batch
 
-def _collate_fn(batch, tokenize_func, tokenizer):
+def _collate_fn(batch, tokenize_func, tokenizer, stage=2):
     none_idx = [i for i, example in enumerate(batch) if example["target"] is None]
     if len(none_idx) > 0:
         batch = [example for i, example in enumerate(batch) if i not in none_idx]
     return_dict = {"target": torch.stack([example["target"] for example in batch])}
 
     # input_images will be a list of list of object images
-    input_images = [
-        list(example["input_images"].values()) if "input_images" in example and example["input_images"][0] is not None else None
-        for example in batch
-    ]
+    if stage == 2:
+        input_images = [
+            list(example["input_images"].values()) if "input_images" in example and example["input_images"][0] is not None else None
+            for example in batch
+        ]
 
     captions = [example["caption"] for example in batch]
 
-    if len(input_images) > 0 and all(x is not None for x in input_images):
-        (
-            return_dict["input_ids"],
-            return_dict["attention_mask"],
-            return_dict["pixel_values"],
-            return_dict["image_sizes"],
-        ) = tokenize_func(
-            tokenizer, captions, input_images
-        )
+    if stage == 2:
+        if len(input_images) > 0 and all(x is not None for x in input_images):
+            (
+                return_dict["input_ids"],
+                return_dict["attention_mask"],
+                return_dict["pixel_values"],
+                return_dict["image_sizes"],
+            ) = tokenize_func(
+                tokenizer, captions, input_images
+            )
+        else:
+            return_dict["input_ids"], return_dict["attention_mask"] = tokenize_func(
+                tokenizer, captions
+            )
     else:
         return_dict["input_ids"], return_dict["attention_mask"] = tokenize_func(
-            tokenizer, captions
-        )
+                tokenizer, captions
+            )
+        
     return return_dict
     # returns target, input_ids, attention_mask, pixel_values, image_sizes
 
@@ -523,9 +537,12 @@ def get_train_datasets(data_args, training_args, model_args, tokenize_func, toke
         target_transform=target_transform,
         ground_truth_transform=ground_truth_transform,
     )
-    trinity_process_fn = partial(_trinity_process_fn, target_transform=target_transform)
-
-    collate_fn = partial(_collate_fn, tokenize_func=tokenize_func, tokenizer=tokenizer)
+    if training_args.training_stage == 2:
+        trinity_process_fn = partial(_trinity_process_fn, target_transform=target_transform)
+        collate_fn = partial(_collate_fn, tokenize_func=tokenize_func, tokenizer=tokenizer)
+    else:
+        trinity_process_fn = partial(_trinity_process_fn, target_transform=target_transform, stage=1)
+        collate_fn = partial(_collate_fn, tokenize_func=tokenize_func, tokenizer=tokenizer, stage=1)
 
     eval_dataset = train_datasets[data_args.eval_dataset].select(
         range(training_args.world_size)

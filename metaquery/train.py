@@ -95,6 +95,7 @@ class TrainingArguments(transformers.TrainingArguments):
     logging_dir: str = "logs"
     output_dir: str = "/nfshomes/asarkar6/trinity/model_weights/"
     data_dir: str = "/nfshomes/asarkar6/trinity/train_data/"
+    training_stage: int = 2
     eval_on_start: bool = True
     eval_strategy: str = "steps"
     eval_steps: int = 1000
@@ -126,7 +127,7 @@ class TrainingArguments(transformers.TrainingArguments):
     dataloader_pin_memory: bool = True
     dataloader_drop_last: bool = True
     remove_unused_columns: bool = False
-    run_name: str = "train"
+    run_name: str = "metaquery-training"
     report_to: str = "wandb"
     ddp_find_unused_parameters: bool = False
     overwrite_output_dir: bool = False
@@ -152,6 +153,8 @@ if __name__ == "__main__":
     _, model_args, data_args, training_args = parser.parse_args_into_dataclasses()
     model_args, data_args = possible_override_args(override_args, model_args, data_args)
 
+    training_args.run_name = training_args.run_name + str(training_args.training_stage)
+
     assert (
         data_args.target_image_size % model_args.vae_downsample_f == 0
     ), f"Image size must be divisible by {model_args.vae_downsample_f}"
@@ -174,6 +177,8 @@ if __name__ == "__main__":
                 **model_args.__dict__,
             ),
         )
+
+    print("ARGS", training_args)
 
     with training_args.main_process_first(local=False):
         train_dataset, eval_dataset, gt_images, collate_fn = get_train_datasets(
@@ -214,6 +219,7 @@ if __name__ == "__main__":
             trainer.model = model
             (trainer.model_wrapped,) = release_memory(trainer.model_wrapped)
             trainer.model_wrapped = trainer.model
+        
         last_checkpoint = None
         if (
             os.path.isdir(training_args.output_dir)
