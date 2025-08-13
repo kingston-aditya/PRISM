@@ -1,1 +1,0 @@
-accelerate launch --multi_gpu --main_process_port 29501 /home/saividyaranya/PRISM/src/scripts/eval/demo.py

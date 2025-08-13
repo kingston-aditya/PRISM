@@ -291,6 +291,7 @@ def _trinity_process_fn(batch, target_transform):
 
     delete_keys_except(batch, ["target", "input_images", "caption"])
     return batch
+    # returns batch["target", "input_images", "caption"]
     
 def editing_eval_process_fn(batch):
     source_images = batch["source_image"]
@@ -308,12 +309,15 @@ def trinity_eval_process_fn(batch):
     target_images = batch["target_image"]
 
     for i in range(len(object_images)):
-        try:
-            object_images[i] = create_object_images(object_images[i], target_images[i]) if len(object_images[i]) > 0 else [None]
-        except:
-            print("Going into except block.")
-            captions[i] = ""
-            object_images[i] = None
+        flag = 0
+        if len(object_images[i]) > 0:
+            try:
+                object_images[i] = create_object_images(object_images[i], target_images[i])
+            except:
+                print("Going into except block.")
+                flag = 1
+        else:
+            flag = 1
 
     batch["caption"]= captions
     batch["input_images"] = [image if image is not None else None for item in object_images for image in item]
@@ -348,7 +352,7 @@ def _collate_fn(batch, tokenize_func, tokenizer):
             tokenizer, captions
         )
     return return_dict
-    # returns input_ids, attention_mask, pixel_values, image_sizes
+    # returns target, input_ids, attention_mask, pixel_values, image_sizes
 
 
 def get_train_datasets(data_args, training_args, model_args, tokenize_func, tokenizer):
