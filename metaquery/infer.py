@@ -36,8 +36,8 @@ class ForkedPdb(pdb_original.Pdb):
 
 target_transform = v2.Compose(
         [
-            v2.Resize((224, 224)),
-            v2.CenterCrop((224, 224)),
+            v2.Resize((512, 512)),
+            v2.CenterCrop((512, 512)),
         ]
     )
 
@@ -106,9 +106,9 @@ if __name__ == "__main__":
 
     parser.add_argument("--output_dir", type=str, default="/path/to/output_dir")
     parser.add_argument("--checkpoint_path", type=str, default="/path/to/checkpoint_path")
-    parser.add_argument("--guidance_scale", type=float, default=3.0)
+    parser.add_argument("--guidance_scale", type=float, default=5.0)
     parser.add_argument("--batch_size", type=int, default=1)
-    parser.add_argument("--num_inference_steps", type=int, default=30)
+    parser.add_argument("--num_inference_steps", type=int, default=50)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
     main(args)

@@ -20,7 +20,7 @@ import sys
 import pdb as pdb_original
 
 # global variables
-BACKUP_PATH = os.path.join("/nfshomes/asarkar6/aditya/PRISM/", "backup")
+BACKUP_PATH = os.path.join("/data/home/saividyaranya/PRISM", "backup")
 
 class ForkedPdb(pdb_original.Pdb):
     """A Pdb subclass that may be used

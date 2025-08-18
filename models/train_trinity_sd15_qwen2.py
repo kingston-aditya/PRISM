@@ -512,7 +512,7 @@ def transform_image(imgs, args):
     if interpolation is None:
         raise ValueError(f"Unsupported interpolation mode {args.image_interpolation_mode}.")
     
-    train_transforms = transforms.Compose(
+    transform_image = transforms.Compose(
         [
             transforms.Resize(args.resolution, interpolation=interpolation),  # Use dynamic interpolation method
             transforms.CenterCrop(args.resolution) if args.center_crop else transforms.RandomCrop(args.resolution),
@@ -900,8 +900,11 @@ def main(args):
         # Only show the progress bar once on each machine.
         disable=not accelerator.is_local_main_process,
     )
-
-    transformer.train()
+    
+    model = accelerator.unwrap_model(transformer)
+    model.unet.eval()
+    model.lmm.eval()
+    model.linear.train()
 
     for epoch in range(first_epoch, args.num_train_epochs):
         train_loss = 0.0
@@ -1018,7 +1021,7 @@ def main(args):
                 # try-except distributed block
                 exception_flag = torch.tensor(0.0, device=accelerator.device)
                 try:
-                    inputs = inputs.to(device=latents.device, dtype=weight_dtype)
+                    inputs = inputs.to(device=latents.device)
                     inputs = {f"lmm_{k}": v for k, v in inputs.items()} 
                 except Exception as e:
                     exception_flag = torch.tensor(1.0, device=accelerator.device)
