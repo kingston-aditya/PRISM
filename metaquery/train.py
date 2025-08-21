@@ -74,7 +74,7 @@ class ModelArguments:
     max_input_text_tokens: int = 256
     connector_num_hidden_layers: int = 24
     system_prompt: str = (
-        "You will be given an image or its caption. Please describe the content of the image in detail in your own words."
+        "You will be given a caption of an image. Please describe the content of the image in detail in your own words."
     )
 
 
@@ -177,8 +177,6 @@ if __name__ == "__main__":
                 **model_args.__dict__,
             ),
         )
-
-    print("ARGS", training_args)
 
     with training_args.main_process_first(local=False):
         train_dataset, eval_dataset, gt_images, collate_fn = get_train_datasets(

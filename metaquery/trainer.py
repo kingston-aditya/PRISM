@@ -306,9 +306,9 @@ class MetaQueryCallback(TrainerCallback):
             stat = []
             for i, (n, p) in enumerate(model.named_parameters()):
                 stat.append([i, n, p.shape, p.dtype, p.requires_grad])
-            print(
-                tabulate(stat, headers=["idx", "name", "shape", "dtype", "trainable"])
-            )
+            # print(
+            #     tabulate(stat, headers=["idx", "name", "shape", "dtype", "trainable"])
+            # )
 
             if hasattr(model.model, "connector") and not isinstance(
                 model.model.connector, nn.Identity

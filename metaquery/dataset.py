@@ -310,25 +310,33 @@ def editing_eval_process_fn(batch):
     delete_keys_except(batch, ["input_images", "caption"])
     return batch
 
-def trinity_eval_process_fn(batch):
-    object_images = batch["object_image"]
+def trinity_eval_process_fn(batch, stage=2):
     captions = batch["caption"]
     target_images = batch["target_image"]
+    object_images = batch["object_image"] if stage == 2 else [None]*len(target_images)
 
-    for i in range(len(object_images)):
-        flag = 0
-        if len(object_images[i]) > 0:
-            try:
-                object_images[i] = create_object_images(object_images[i], target_images[i])
-            except:
-                print("Going into except block.")
+    if stage == 2:
+        for i in range(len(object_images)):
+            flag = 0
+            if len(object_images[i]) > 0:
+                try:
+                    object_images[i] = create_object_images(object_images[i], target_images[i])
+                except:
+                    print("Going into except block.")
+                    flag = 1
+            else:
                 flag = 1
-        else:
-            flag = 1
+            
+            if flag == 1:
+                captions[i], target_images[i], object_images[i] = create_dummy_objects()
+        
+        batch["input_images"] = [image if image is not None else None for item in object_images for image in item]
+        batch["caption"]= captions
+        delete_keys_except(batch, ["input_images", "caption"])
+    else:
+        batch["caption"] = captions
+        delete_keys_except(batch, ["caption"])
 
-    batch["caption"]= captions
-    batch["input_images"] = [image if image is not None else None for item in object_images for image in item]
-    delete_keys_except(batch, ["input_images", "caption"])
     return batch
 
 def _collate_fn(batch, tokenize_func, tokenizer, stage=2):
@@ -483,10 +491,11 @@ def get_train_datasets(data_args, training_args, model_args, tokenize_func, toke
 
     if "trinity" in data_args.train_datasets:
         # iterate over all files
-        paths = [os.path.join(training_args.data_dir, path) for path in glob.glob(os.path.join(training_args.data_dir, "*.jsonl"))]
+        # paths = [os.path.join(training_args.data_dir, path) for path in glob.glob(os.path.join(training_args.data_dir, "*.jsonl"))]
+        path = os.path.join(training_args.data_dir, "trinity-data-real-combined.json")
         train_dataset = load_dataset(
             "json",
-            data_files = paths,
+            data_files = path,
             split="train",
             num_proc=training_args.datasets_num_proc,
         )
@@ -540,9 +549,11 @@ def get_train_datasets(data_args, training_args, model_args, tokenize_func, toke
     if training_args.training_stage == 2:
         trinity_process_fn = partial(_trinity_process_fn, target_transform=target_transform)
         collate_fn = partial(_collate_fn, tokenize_func=tokenize_func, tokenizer=tokenizer)
+        trinity_eval_process_fn_full = partial(trinity_eval_process_fn, stage=2)
     else:
         trinity_process_fn = partial(_trinity_process_fn, target_transform=target_transform, stage=1)
         collate_fn = partial(_collate_fn, tokenize_func=tokenize_func, tokenizer=tokenizer, stage=1)
+        trinity_eval_process_fn_full = partial(trinity_eval_process_fn, stage=1)
 
     eval_dataset = train_datasets[data_args.eval_dataset].select(
         range(training_args.world_size)
@@ -574,7 +585,7 @@ def get_train_datasets(data_args, training_args, model_args, tokenize_func, toke
     elif data_args.eval_dataset in ["ominiedit"]:
         eval_dataset.set_transform(editing_eval_process_fn)
     elif data_args.eval_dataset in ["trinity"]:
-        eval_dataset.set_transform(trinity_eval_process_fn)
+        eval_dataset.set_transform(trinity_eval_process_fn_full)
     else:
         raise ValueError(f"Unknown eval_dataset: {data_args.eval_dataset}")
 

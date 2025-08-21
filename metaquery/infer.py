@@ -95,7 +95,7 @@ def main(args):
             obj_images = create_objects(args, data["object_images"])
             images = sample_fn(pipeline, prompt, obj_images, args)
         else:
-            images = sample_fn(pipeline, prompt, args)
+            images = sample_fn(pipeline, prompt, None, args)
 
         for j, image in enumerate(images):
             image.save(f"{args.output_dir}/{args.start_idx+i+j:05d}.png")
