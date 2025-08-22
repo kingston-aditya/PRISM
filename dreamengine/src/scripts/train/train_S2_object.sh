@@ -13,8 +13,7 @@ export VALIDATION_IMAGES="./datasets/JourneyDB/data/train/imgs/003/0a3b185f-b0e4
 
 
 
-accelerate launch --config_file ./QwenVL-GEN/diffusers/examples/dreambooth/default_config_1gpu.yaml \
-  train.py \
+accelerate launch train.py \
   --output_dir=$OUTPUT_DIR \
   --pretrained_diffusion_ckpt="./models/stable-diffusion-3.5-large" \
   --pretrained_lmm_ckpt="./models/Qwen2-VL-2B-Instruct" \

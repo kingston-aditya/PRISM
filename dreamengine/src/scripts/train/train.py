@@ -86,25 +86,27 @@ def get_captions_with_random_objects(segments, image, max_obj_num=3, max_size=0.
     max_object_area = max_size * image.width * image.height
 
     for segment in segments:
-        caption, boxes = segment
+        caption = segment["labels"]
 
         caption_object_list.append(caption)
 
-        if boxes:
-            for box in boxes:
-                x1, y1, x2, y2 = box
-                # Scale the coordinates according to the image size
-                x1, x2 = x1 * image.width / 1000, x2 * image.width / 1000
-                y1, y2 = y1 * image.height / 1000, y2 * image.height / 1000
-                width, height = x2 - x1, y2 - y1
-                # Calculate the area of the object
-                object_area = width * height
-                # Check if the object's area is within the allowed maximum size
-                if object_area <= max_object_area:
-                    # Crop the object from the image
-                    object_image = image.crop((x1, y1, x2, y2))
-                    # Append (name, object_image) to the list
-                    caption_object_list.append(object_image)
+        x1 = 0 if segment["xmin"] is None else int(segment["xmin"])
+        y1 = 0 if segment["ymin"] is None else int(segment["ymin"])
+        x2 = image.width if segment["xmax"] is None else int(segment["xmax"])
+        y2 = image.height if segment["ymax"] is None else int(segment["ymax"])
+
+        # Scale the coordinates according to the image size
+        x1, x2 = x1 * image.width / 1000, x2 * image.width / 1000
+        y1, y2 = y1 * image.height / 1000, y2 * image.height / 1000
+        width, height = x2 - x1, y2 - y1
+        # Calculate the area of the object
+        object_area = width * height
+        # Check if the object's area is within the allowed maximum size
+        if object_area <= max_object_area:
+            # Crop the object from the image
+            object_image = image.crop((x1, y1, x2, y2))
+            # Append (name, object_image) to the list
+            caption_object_list.append(object_image)
 
     # If number of objects exceeds max_obj_num, randomly select max_obj_num objects from all objects, do not change the captions, only filter the object image
 
@@ -145,22 +147,25 @@ def get_random_objects_with_name(segments, image, max_obj_num=3, max_size=0.5):
     max_object_area = max_size * image.width * image.height
 
     for segment in segments:
-        caption, boxes = segment
-        if boxes:
-            for box in boxes:
-                x1, y1, x2, y2 = box
-                # Scale the coordinates according to the image size
-                x1, x2 = x1 * image.width / 1000, x2 * image.width / 1000
-                y1, y2 = y1 * image.height / 1000, y2 * image.height / 1000
-                width, height = x2 - x1, y2 - y1
-                # Calculate the area of the object
-                object_area = width * height
-                # Check if the object's area is within the allowed maximum size
-                if object_area <= max_object_area:
-                    # Crop the object from the image
-                    object_image = image.crop((x1, y1, x2, y2))
-                    # Append (name, object_image) to the list
-                    objects_with_name.append((caption.strip(), object_image))
+        caption = segment["labels"]
+
+        x1 = 0 if segment["xmin"] is None else int(segment["xmin"])
+        y1 = 0 if segment["ymin"] is None else int(segment["ymin"])
+        x2 = image.width if segment["xmax"] is None else int(segment["xmax"])
+        y2 = image.height if segment["ymax"] is None else int(segment["ymax"])
+
+        # Scale the coordinates according to the image size
+        x1, x2 = x1 * image.width / 1000, x2 * image.width / 1000
+        y1, y2 = y1 * image.height / 1000, y2 * image.height / 1000
+        width, height = x2 - x1, y2 - y1
+        # Calculate the area of the object
+        object_area = width * height
+        # Check if the object's area is within the allowed maximum size
+        if object_area <= max_object_area:
+            # Crop the object from the image
+            object_image = image.crop((x1, y1, x2, y2))
+            # Append (name, object_image) to the list
+            objects_with_name.append((caption.strip(), object_image))
 
     # If number of objects exceeds max_obj_num, randomly select max_obj_num objects
     if len(objects_with_name) > max_obj_num:
@@ -210,7 +215,6 @@ class InterleavedDataset(Dataset):
         self.image_column = dataset_config['image_column']
         self.caption_column = dataset_config['text_column']
         
-
         self.target_image_column = dataset_config.get("target_image_column", None)
 
         self.segment_column = dataset_config.get("segment_column", None)
@@ -294,8 +298,12 @@ class InterleavedDataset(Dataset):
                         target_image = Image.open(target_image_url)
                 
                 if self.segment_column:
-                    segments = eval(self.dataset[index][self.segment_column]) 
-            
+                    segments = self.dataset[index][self.segment_column]
+
+                if segments is None:
+                    new_index = random.randint(0,len(self.dataset)-1)
+                    return self.__getitem__(new_index)
+                
             else: 
                 image = self.dataset[index][self.image_column]
 
@@ -529,7 +537,7 @@ def load_sharded_model(config_path, index_path, bin_files_folder, qwenvl2_model,
             print(f"  - {key}")
     
     # Transfer the model to the specified device
-    print(f"Transferring the model to {device.upper()}...")
+    # print(f"Transferring the model to {device.upper()}...")
     model.to(device)
 
     print("Model loaded successfully.")
@@ -767,9 +775,9 @@ def main(args):
     if args.resume_from_checkpoint:
         logger.info(f"Loading checkpoint from {args.resume_from_checkpoint}")
         transformer = load_sharded_model(
-            os.path.join(args.resume_from_checkpoint,"config.json"),
-            os.path.join(args.resume_from_checkpoint,"diffusion_pytorch_model.bin.index.json"),
-            os.path.join(args.resume_from_checkpoint,),
+            os.path.join(args.resume_from_checkpoint,"transformer", "config.json"),
+            os.path.join(args.resume_from_checkpoint,"transformer", "diffusion_pytorch_model.bin.index.json"),
+            os.path.join(args.resume_from_checkpoint,"transformer", ),
             qwenvl2_model,
             sd3_model,
             accelerator.device,
