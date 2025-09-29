@@ -5,6 +5,7 @@ import numpy as np
 import random
 from diffusers.pipelines.stable_diffusion_3.pipeline_stable_diffusion_3 import retrieve_timesteps
 from diffusers.pipelines.qwenimage.pipeline_qwenimage_edit import calculate_shift, calculate_dimensions
+import warnings
 
 from diffusers.image_processor import PipelineImageInput
 from .sd3_sde_with_logprob import sde_step_with_logprob
@@ -137,7 +138,7 @@ def pipeline_with_logprob(
         guidance = torch.full([1], guidance_scale, device=device, dtype=torch.float32)
         guidance = guidance.expand(latents.shape[0])
     elif not self.transformer.config.guidance_embeds and guidance_scale is not None:
-        logger.warning(
+        warnings.warn(
             f"guidance_scale is passed as {guidance_scale}, but ignored since the model is not guidance-distilled."
         )
         guidance = None

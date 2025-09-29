@@ -25,6 +25,9 @@ from peft import LoraConfig, get_peft_model, set_peft_model_state_dict, PeftMode
 import random
 from torch.utils.data import Dataset, DataLoader, Sampler
 
+import pdb as pdb_original
+import sys
+
 # Setup logger
 logger = logging.getLogger(__name__)
 from diffusers import QwenImageEditPipeline, QwenImageTransformer2DModel
@@ -37,13 +40,15 @@ import flow_grpo.rewards
 from flow_grpo.stat_tracking import PerPromptStatTracker
 from flow_grpo.diffusers_patch.qwenimage_edit_pipeline_with_logprob import pipeline_with_logprob
 from flow_grpo.diffusers_patch.sd3_sde_with_logprob import sde_step_with_logprob
-
 from flow_grpo.ema import EMAModuleWrapper
+
 
 tqdm = partial(tqdm.tqdm, dynamic_ncols=True)
 
 FLAGS = flags.FLAGS
 config_flags.DEFINE_config_file("config", "config/base.py", "Training configuration.")
+
+INPUT_DIR = "/nfshomes/asarkar6/aditya/PRISM/validation"
 
 SYSTEM_PROMPT = '''
 # Edit Instruction Rewriter
@@ -112,55 +117,7 @@ def set_seed(seed, device_specific=True):
         torch.cuda.manual_seed_all(seed + dist.get_rank() if dist.is_initialized() else seed)
 
 # concatenate a list of PIL images
-def concatenate_images(images, direction="horizontal"):
-    if not images:
-        return None
-    
-    # Filter out None images
-    valid_images = [Image.open(os.path.join(INPUT_DIR, img["img_pth"])) if img is not None else None for img in images ]
-    
-    if not valid_images:
-        return None
-    
-    if len(valid_images) == 1:
-        return valid_images[0].convert("RGB")
-    
-    # Convert all images to RGB
-    valid_images = [img.convert("RGB") for img in valid_images]
-    
-    if direction == "horizontal":
-        # Calculate total width and max height
-        total_width = sum(img.width for img in valid_images)
-        max_height = max(img.height for img in valid_images)
-        
-        # Create new image
-        concatenated = Image.new('RGB', (total_width, max_height), (255, 255, 255))
-        
-        # Paste images
-        x_offset = 0
-        for img in valid_images:
-            # Center image vertically if heights differ
-            y_offset = (max_height - img.height) // 2
-            concatenated.paste(img, (x_offset, y_offset))
-            x_offset += img.width
-            
-    else:  
-        # Calculate max width and total height
-        max_width = max(img.width for img in valid_images)
-        total_height = sum(img.height for img in valid_images)
-        
-        # Create new image
-        concatenated = Image.new('RGB', (max_width, total_height), (255, 255, 255))
-        
-        # Paste images
-        y_offset = 0
-        for img in valid_images:
-            # Center image horizontally if widths differ
-            x_offset = (max_width - img.width) // 2
-            concatenated.paste(img, (x_offset, y_offset))
-            y_offset += img.height
-    
-    return concatenated
+
 
 class GenevalPromptImageDataset(Dataset):
     def __init__(self, dataset, split='train'):
@@ -168,31 +125,36 @@ class GenevalPromptImageDataset(Dataset):
         self.dataset = dataset
         # check the file paths
         if split == 'train':
-            self.file_path = os.path.join(dataset, 'trinity-data.json')
+            self.file_path = os.path.join(dataset, 'trinity-data-real-combined.json')
         elif split == 'test':
             self.file_path = os.path.join(self.dataset, "metadata.jsonl")
         
         # load the file
         with open(self.file_path, 'r', encoding='utf-8') as f:
-            self.metadatas = [json.loads(line) for line in f]
+            self.metadatas = json.load(f) if split == "train" else [json.loads(line.strip()) for line in f]
+
             self.prompts = [item['prompt'] for item in self.metadatas]
-            self.objects = [item["object"] for item in self.metadatas]
-            self.images = [item["image"] for item in self.metadatas] if split=="train" else None
+            self.objects = [item["object"] if "object" in item.keys() else None for item in self.metadatas]
+            self.images = [item["file_name"] for item in self.metadatas] if split=="train" else None
         
     def __len__(self):
         return len(self.prompts)
     
     def __getitem__(self, idx):
+        if self.objects[idx] is None:
+            while self.objects[idx] is not None:
+                idx = np.random.randint(0, len(self.prompts))
+
         if self.split == "train":
             item = {
                 "prompt": self.prompts[idx],
                 "images": self.images[idx],
-                "objects": concatenate_images(self.objects[idx])
+                "objects": self.concatenate_images(self.images[idx], self.objects[idx], self.dataset)
             }
         elif self.split == "test":
             item = {
                 "prompt": self.prompts[idx],
-                "objects": concatenate_images(self.objects[idx])
+                "objects": self.concatenate_images(None, self.objects[idx], self.dataset)
             }
         else:
             raise ValueError("This is not correct!")
@@ -202,8 +164,62 @@ class GenevalPromptImageDataset(Dataset):
     def collate_fn(examples):
         prompts = [example["prompt"] for example in examples]
         objects = [example["objects"] for example in examples]
-        images = [example["images"] if example["images"] is not None else None for example in examples]
+        images = [example["images"] for example in examples] if "images" in examples[0].keys() else None
         return prompts, objects, images
+    
+    @staticmethod
+    def concatenate_images(main_images, images, input_dir, direction="horizontal"):
+        if not images:
+            return None
+        
+        # Filter out None images
+        if main_images is None:
+            valid_images = [Image.open(os.path.join(input_dir, img["img_pth"])) if img is not None else None for img in images]
+        else:
+            valid_images = [Image.fromarray(np.asarray(Image.open(main_images))[int(item["ymin"]):int(item["ymax"]), int(item["xmin"]):int(item["xmax"])]) for item in images]
+        
+        if not valid_images:
+            return None
+        
+        if len(valid_images) == 1:
+            return valid_images[0].convert("RGB")
+        
+        # Convert all images to RGB
+        valid_images = [img.convert("RGB") for img in valid_images]
+        
+        if direction == "horizontal":
+            # Calculate total width and max height
+            total_width = sum(img.width for img in valid_images)
+            max_height = max(img.height for img in valid_images)
+            
+            # Create new image
+            concatenated = Image.new('RGB', (total_width, max_height), (255, 255, 255))
+            
+            # Paste images
+            x_offset = 0
+            for img in valid_images:
+                # Center image vertically if heights differ
+                y_offset = (max_height - img.height) // 2
+                concatenated.paste(img, (x_offset, y_offset))
+                x_offset += img.width
+                
+        else:  
+            # Calculate max width and total height
+            max_width = max(img.width for img in valid_images)
+            total_height = sum(img.height for img in valid_images)
+            
+            # Create new image
+            concatenated = Image.new('RGB', (max_width, total_height), (255, 255, 255))
+            
+            # Paste images
+            y_offset = 0
+            for img in valid_images:
+                # Center image horizontally if widths differ
+                x_offset = (max_width - img.width) // 2
+                concatenated.paste(img, (x_offset, y_offset))
+                y_offset += img.height
+        
+        return concatenated
 
 
 class DistributedKRepeatSampler(Sampler):
@@ -359,7 +375,7 @@ def eval(pipeline, test_dataloader, config, rank, local_rank, world_size, device
             disable=local_rank != 0,
             position=0,
         ):
-        prompts, prompt_metadata, ref_images, _ = test_batch
+        prompts, ref_images = test_batch
         ref_images = [ref_image.resize((config.resolution, config.resolution)) for ref_image in ref_images]
         with autocast():
             with torch.no_grad():
@@ -377,7 +393,7 @@ def eval(pipeline, test_dataloader, config, rank, local_rank, world_size, device
                         sde_window_size=0,
                 )
         images = collected_data["images"]
-        rewards = executor.submit(reward_fn, images, prompts, prompt_metadata, ref_images, only_strict=False)
+        rewards = executor.submit(reward_fn, images, prompts, prompts, ref_images, only_strict=False)
         # yield to to make sure reward computation starts
         time.sleep(0)
         rewards, reward_metadata = rewards.result()
@@ -449,6 +465,18 @@ def get_transformer_layer_cls():
         Qwen2_5_VLDecoderLayer
         }
 
+class ForkedPdb(pdb_original.Pdb):
+    """A Pdb subclass that may be used
+    from a forked multiprocessing child
+    """
+    def interaction(self, *args, **kwargs):
+        _stdin = sys.stdin
+        try:
+            sys.stdin = open('/dev/stdin')
+            pdb_original.Pdb.interaction(self, *args, **kwargs)
+        finally:
+            sys.stdin = _stdin
+
 def main(_):
     # basic Accelerate and logging setup
     config = FLAGS.config
@@ -489,6 +517,36 @@ def main(_):
         inference_dtype = torch.float16
     elif config.mixed_precision == "bf16":
         inference_dtype = torch.bfloat16
+
+    train_dataset = GenevalPromptImageDataset(config.train_dataset, 'train')
+    test_dataset = GenevalPromptImageDataset(config.test_dataset, 'test')
+
+    train_sampler = DistributedKRepeatSampler( 
+        dataset=train_dataset,
+        batch_size=config.sample.train_batch_size,
+        k=config.sample.num_image_per_prompt,
+        num_replicas=world_size,
+        rank=rank,
+        seed=42
+    )
+
+    # Create a DataLoader; note that shuffling is not needed here because it’s controlled by the Sampler.
+    train_dataloader = DataLoader(
+        train_dataset,
+        batch_sampler=train_sampler,
+        num_workers=1,
+        collate_fn=GenevalPromptImageDataset.collate_fn,
+        # persistent_workers=True
+    )
+
+    test_dataloader = DataLoader(
+        test_dataset,
+        sampler=DistributedSampler(test_dataset, shuffle=False),
+        batch_size=config.sample.test_batch_size,
+        collate_fn=GenevalPromptImageDataset.collate_fn,
+        shuffle=False,
+        num_workers=8,
+    )
 
     # load scheduler, tokenizer and models.
     pipeline = QwenImageEditPipeline.from_pretrained(
@@ -611,36 +669,6 @@ def main(_):
 
     if config.fsdp_optimizer_offload:
         optimizer = OptimizerOffload(optimizer)
-    
-    train_dataset = GenevalPromptImageDataset(config.train_dataset, 'train')
-    test_dataset = GenevalPromptImageDataset(config.test_dataset, 'test')
-
-    train_sampler = DistributedKRepeatSampler( 
-        dataset=train_dataset,
-        batch_size=config.sample.train_batch_size,
-        k=config.sample.num_image_per_prompt,
-        num_replicas=world_size,
-        rank=rank,
-        seed=42
-    )
-
-    # Create a DataLoader; note that shuffling is not needed here because it’s controlled by the Sampler.
-    train_dataloader = DataLoader(
-        train_dataset,
-        batch_sampler=train_sampler,
-        num_workers=1,
-        collate_fn=GenevalPromptImageDataset.collate_fn,
-        # persistent_workers=True
-    )
-
-    test_dataloader = DataLoader(
-        test_dataset,
-        sampler=DistributedSampler(test_dataset, shuffle=False),
-        batch_size=config.sample.test_batch_size,
-        collate_fn=GenevalPromptImageDataset.collate_fn,
-        shuffle=False,
-        num_workers=8,
-    )
 
     if config.sample.num_image_per_prompt == 1:
         config.per_prompt_stat_tracking = False
@@ -718,11 +746,12 @@ def main(_):
             position=0,
         ):
             train_sampler.set_epoch(epoch * config.sample.num_batches_per_epoch + i)
-            prompts, prompt_metadata, ref_images, prompt_with_image_paths = next(train_iter)
+            
+            prompts, ref_images, gt_images= next(train_iter)
             
             ref_images = [ref_image.resize((config.resolution, config.resolution)) for ref_image in ref_images]
             prompt_ids = pipeline.tokenizer(
-                prompt_with_image_paths,
+                prompts,
                 padding="max_length",
                 max_length=256,
                 truncation=True,
@@ -757,8 +786,9 @@ def main(_):
             log_probs = torch.stack(collected_data["all_log_probs"], dim=1)  
             timesteps = torch.stack(collected_data["all_timesteps"]).unsqueeze(0).repeat(config.sample.train_batch_size, 1)
             images = collected_data["images"]
+
             # compute rewards asynchronously
-            rewards = executor.submit(reward_fn, images, prompts, prompt_metadata, ref_images, only_strict=True)
+            rewards = executor.submit(reward_fn, images, prompts, prompts, ref_images, only_strict=True)
             # yield to to make sure reward computation starts
             time.sleep(0)
 
