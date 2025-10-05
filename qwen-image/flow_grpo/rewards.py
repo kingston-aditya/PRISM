@@ -4,6 +4,21 @@ import numpy as np
 import torch
 from collections import defaultdict
 
+import sys
+import pdb as pdb_original
+
+class ForkedPdb(pdb_original.Pdb):
+    """A Pdb subclass that may be used
+    from a forked multiprocessing child
+    """
+    def interaction(self, *args, **kwargs):
+        _stdin = sys.stdin
+        try:
+            sys.stdin = open('/dev/stdin')
+            pdb_original.Pdb.interaction(self, *args, **kwargs)
+        finally:
+            sys.stdin = _stdin
+
 def jpeg_incompressibility():
     def _fn(images, prompts, metadata):
         if isinstance(images, torch.Tensor):
@@ -44,10 +59,10 @@ def aesthetic_score():
 
     return _fn
 
-def clip_score():
+def clip_score(device, cache_dir):
     from flow_grpo.clip_scorer import ClipScorer
 
-    scorer = ClipScorer(dtype=torch.float32).cuda()
+    scorer = ClipScorer(device=device, cache_dir=cache_dir).cuda()
 
     def _fn(images, prompts, metadata):
         if not isinstance(images, torch.Tensor):
@@ -407,7 +422,7 @@ def unifiedreward_score_sglang(device):
     
     return _fn
 
-def multi_score(device, score_dict):
+def multi_score(device, score_dict, cache_dir):
     score_functions = {
         "deqa": deqa_score_remote,
         "ocr": ocr_score,
@@ -423,8 +438,11 @@ def multi_score(device, score_dict):
         "image_similarity": image_similarity_score,
     }
     score_fns={}
+
+    ForkedPdb().set_trace()
+
     for score_name, weight in score_dict.items():
-        score_fns[score_name] = score_functions[score_name](device) if 'device' in score_functions[score_name].__code__.co_varnames else score_functions[score_name]()
+        score_fns[score_name] = score_functions[score_name](device, cache_dir) if 'device' in score_functions[score_name].__code__.co_varnames else score_functions[score_name]()
 
     # only_strict is only for geneval. During training, only the strict reward is needed, and non-strict rewards don't need to be computed, reducing reward calculation time.
     def _fn(images, prompts, metadata, ref_images=None, only_strict=True):

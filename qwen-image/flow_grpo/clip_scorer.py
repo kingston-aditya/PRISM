@@ -28,11 +28,12 @@ def get_image_transform(processor:AutoImageProcessor):
     return T.Compose([resize, crop, normalise])
 
 class ClipScorer(torch.nn.Module):
-    def __init__(self, device):
+    def __init__(self, device, cache_dir):
         super().__init__()
         self.device=device
-        self.model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14").to(device)
-        self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
+        self.cache_dir = cache_dir
+        self.model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14", cache_dir=self.cache_dir).to(device)
+        self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14", cache_dir=self.cache_dir)
         self.tform = get_image_transform(self.processor.image_processor)
         self.eval()
     

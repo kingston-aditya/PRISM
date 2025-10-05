@@ -11,6 +11,8 @@ from ml_collections import config_flags
 import torch.distributed as dist
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.utils.data.distributed import DistributedSampler
+
+from diffusers import DiffusionPipeline
 import logging
 import itertools
 
@@ -30,7 +32,7 @@ import sys
 
 # Setup logger
 logger = logging.getLogger(__name__)
-from diffusers import QwenImageEditPipeline, QwenImageTransformer2DModel
+# from diffusers import QwenImageEditPipeline, QwenImageTransformer2DModel
 from diffusers.utils.torch_utils import is_compiled_module
 from diffusers.pipelines.qwenimage.pipeline_qwenimage_edit import calculate_shift, calculate_dimensions
 
@@ -451,19 +453,23 @@ def eval(pipeline, test_dataloader, config, rank, local_rank, world_size, device
         ema.copy_temp_to(transformer_trainable_parameters)
 
 
+# def get_transformer_layer_cls():
+#     from diffusers.models.transformers.transformer_qwenimage import QwenImageTransformerBlock
+#     from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLVisionBlock, Qwen2_5_VLDecoderLayer
+#     return {
+#         QwenImageTransformerBlock,
+#         # QwenImageResidualBlock,
+#         # QwenImageResample,
+#         # QwenImageResidualBlock,
+#         # QwenImageMidBlock,
+#         # QwenImageAttentionBlock,
+#         Qwen2_5_VLVisionBlock,
+#         Qwen2_5_VLDecoderLayer
+#         }
+
 def get_transformer_layer_cls():
-    from diffusers.models.transformers.transformer_qwenimage import QwenImageTransformerBlock
-    from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLVisionBlock, Qwen2_5_VLDecoderLayer
-    return {
-        QwenImageTransformerBlock,
-        # QwenImageResidualBlock,
-        # QwenImageResample,
-        # QwenImageResidualBlock,
-        # QwenImageMidBlock,
-        # QwenImageAttentionBlock,
-        Qwen2_5_VLVisionBlock,
-        Qwen2_5_VLDecoderLayer,
-        }
+    from diffusers import UNet2DConditionModel
+    return {UNet2DConditionModel}
 
 class ForkedPdb(pdb_original.Pdb):
     """A Pdb subclass that may be used
@@ -549,13 +555,13 @@ def main(_):
     )
 
     # load scheduler, tokenizer and models.
-    pipeline = QwenImageEditPipeline.from_pretrained(
+    pipeline = DiffusionPipeline.from_pretrained(
         config.pretrained.model, torch_dtype=inference_dtype, cache_dir=config.cache_dir
     )
     # freeze parameters of models to save more memory
     pipeline.vae.requires_grad_(False)
     pipeline.text_encoder.requires_grad_(False)
-    pipeline.transformer.requires_grad_(not config.use_lora)
+    pipeline.unet.requires_grad_(not config.use_lora)
 
     # disable safety checker
     pipeline.safety_checker = None
@@ -573,22 +579,15 @@ def main(_):
     pipeline.vae.to(device, dtype=torch.float32)
     pipeline.text_encoder.to(device, dtype=inference_dtype)
     
-    pipeline.transformer.to(device)
+    pipeline.unet.to(device)
+
     if config.use_lora:
         # Set correct lora layers
         target_modules = [
-            "attn.to_k",
-            "attn.to_q",
-            "attn.to_v",
-            "attn.to_out.0",
-            "attn.add_k_proj",
-            "attn.add_q_proj",
-            "attn.add_v_proj",
-            "attn.to_add_out",
-            "img_mlp.net.0.proj",
-            "img_mlp.net.2",
-            "txt_mlp.net.0.proj",
-            "txt_mlp.net.2",
+            "to_k",
+            "to_q",
+            "to_v",
+            "to_out.0",
         ]
         transformer_lora_config = LoraConfig(
             r=64,
@@ -597,13 +596,13 @@ def main(_):
             target_modules=target_modules,
         )
         if config.train.lora_path:
-            pipeline.transformer = PeftModel.from_pretrained(pipeline.transformer, config.train.lora_path)
+            pipeline.unet = PeftModel.from_pretrained(pipeline.unet, config.train.lora_path)
             # After loading with PeftModel.from_pretrained, all parameters have requires_grad set to False. You need to call set_adapter to enable gradients for the adapter parameters.
-            pipeline.transformer.set_adapter("default")
+            pipeline.unet.set_adapter("default")
         else:
-            pipeline.transformer = get_peft_model(pipeline.transformer, transformer_lora_config)
+            pipeline.unet = get_peft_model(pipeline.unet, transformer_lora_config)
     
-    transformer = pipeline.transformer
+    transformer = pipeline.unet
 
     # Setup FSDP configuration
     fsdp_config = FSDPConfig(
@@ -620,12 +619,12 @@ def main(_):
     # Wrap language model with FSDP
     transformer.cpu().to(dtype=torch.float32)
     transformer = fsdp_wrapper(transformer, fsdp_config, get_transformer_layer_cls)
-    pipeline.transformer = transformer
+    pipeline.unet = transformer
 
     if config.train.beta > 0:
-        transformer_ref = QwenImageTransformer2DModel.from_pretrained(
+        transformer_ref = DiffusionPipeline.from_pretrained(
             config.pretrained.model,
-            subfolder="transformer",
+            subfolder="unet",
             torch_dtype=inference_dtype,
             cache_dir=config.cache_dir
         )
@@ -686,10 +685,15 @@ def main(_):
     else:
         autocast = contextlib.nullcontext
 
+    # ForkedPdb().set_trace()
+
     # FSDP doesn't need deepspeed configuration
     # prepare prompt and reward fn
-    reward_fn = getattr(flow_grpo.rewards, 'multi_score')(device, config.reward_fn)
-    eval_reward_fn = getattr(flow_grpo.rewards, 'multi_score')(device, config.reward_fn)
+    reward_fn = getattr(flow_grpo.rewards, 'multi_score')(device, config.reward_fn, config.cache_dir)
+
+    ForkedPdb().set_trace()
+
+    eval_reward_fn = getattr(flow_grpo.rewards, 'multi_score')(device, config.reward_fn, config.cache_dir)
     
     # FSDP setup completed above
     # executor to perform callbacks asynchronously. this is beneficial for the llava callbacks which makes a request to a
@@ -729,7 +733,7 @@ def main(_):
     train_iter = iter(train_dataloader)
     while True:
         #################### EVAL ####################
-        pipeline.transformer.eval()
+        pipeline.unet.eval()
         if epoch % config.save_freq == 0 and epoch > 0:
             save_fsdp_checkpoint(config.save_dir, transformer, global_step, rank)
         if epoch % config.eval_freq == 0:
@@ -737,7 +741,7 @@ def main(_):
 
         
         #################### SAMPLING ####################
-        pipeline.transformer.eval()
+        pipeline.unet.eval()
         samples = []
         for i in tqdm(
             range(config.sample.num_batches_per_epoch),
@@ -972,7 +976,7 @@ def main(_):
             ]
 
             # train
-            pipeline.transformer.train()
+            pipeline.unet.train()
             info = defaultdict(list)
             for i, sample in tqdm(
                 list(enumerate(samples_batched)),
