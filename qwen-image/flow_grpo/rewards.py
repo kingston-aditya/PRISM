@@ -439,8 +439,6 @@ def multi_score(device, score_dict, cache_dir):
     }
     score_fns={}
 
-    ForkedPdb().set_trace()
-
     for score_name, weight in score_dict.items():
         score_fns[score_name] = score_functions[score_name](device, cache_dir) if 'device' in score_functions[score_name].__code__.co_varnames else score_functions[score_name]()
 

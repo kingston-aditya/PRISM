@@ -248,7 +248,7 @@ def main():
         # ForkedPdb().set_trace()
 
         #preprocessing
-        # captions = [caption[0] for caption in captions]
+        # ForkedPdb().set_trace()
         images = torch.stack([preprocess(image).unsqueeze(0) for image in images], dim=0)
         captions = tokenizer(captions)
 
@@ -281,7 +281,7 @@ def main():
         plt.hist(flat_clip_scores, bins=50, alpha=0.7)
         plt.xlabel("Value")
         plt.ylabel("Frequency")
-        plt.title("Distribution of SigLIP scores")
+        plt.title("Distribution of CLIP scores")
         plt.savefig(os.path.join(args.output_dir, "clip_distribution.png"))
 
         # make histogram for object sizes

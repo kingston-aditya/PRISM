@@ -375,7 +375,7 @@ def eval(pipeline, test_dataloader, config, rank, local_rank, world_size, device
             disable=local_rank != 0,
             position=0,
         ):
-        prompts, ref_images = test_batch
+        prompts, ref_images, _ = test_batch
         ref_images = [ref_image.resize((config.resolution, config.resolution)) for ref_image in ref_images]
         with autocast():
             with torch.no_grad():
@@ -688,8 +688,8 @@ def main(_):
 
     # FSDP doesn't need deepspeed configuration
     # prepare prompt and reward fn
-    reward_fn = getattr(flow_grpo.rewards, 'multi_score')(device, config.reward_fn)
-    eval_reward_fn = getattr(flow_grpo.rewards, 'multi_score')(device, config.reward_fn)
+    reward_fn = getattr(flow_grpo.rewards, 'multi_score')(device, config.reward_fn, config.cache_dir)
+    eval_reward_fn = getattr(flow_grpo.rewards, 'multi_score')(device, config.reward_fn, config.cache_dir)
     
     # FSDP setup completed above
     # executor to perform callbacks asynchronously. this is beneficial for the llava callbacks which makes a request to a
