@@ -518,36 +518,6 @@ def main(_):
     elif config.mixed_precision == "bf16":
         inference_dtype = torch.bfloat16
 
-    train_dataset = GenevalPromptImageDataset(config.train_dataset, 'train')
-    test_dataset = GenevalPromptImageDataset(config.test_dataset, 'test')
-
-    train_sampler = DistributedKRepeatSampler( 
-        dataset=train_dataset,
-        batch_size=config.sample.train_batch_size,
-        k=config.sample.num_image_per_prompt,
-        num_replicas=world_size,
-        rank=rank,
-        seed=42
-    )
-
-    # Create a DataLoader; note that shuffling is not needed here because it’s controlled by the Sampler.
-    train_dataloader = DataLoader(
-        train_dataset,
-        batch_sampler=train_sampler,
-        num_workers=1,
-        collate_fn=GenevalPromptImageDataset.collate_fn,
-        # persistent_workers=True
-    )
-
-    test_dataloader = DataLoader(
-        test_dataset,
-        sampler=DistributedSampler(test_dataset, shuffle=False),
-        batch_size=config.sample.test_batch_size,
-        collate_fn=GenevalPromptImageDataset.collate_fn,
-        shuffle=False,
-        num_workers=8,
-    )
-
     # load scheduler, tokenizer and models.
     pipeline = QwenImageEditPipeline.from_pretrained(
         config.pretrained.model, torch_dtype=inference_dtype, cache_dir=config.cache_dir
@@ -669,6 +639,36 @@ def main(_):
 
     if config.fsdp_optimizer_offload:
         optimizer = OptimizerOffload(optimizer)
+
+    train_dataset = GenevalPromptImageDataset(config.train_dataset, 'train')
+    test_dataset = GenevalPromptImageDataset(config.test_dataset, 'test')
+
+    train_sampler = DistributedKRepeatSampler( 
+        dataset=train_dataset,
+        batch_size=config.sample.train_batch_size,
+        k=config.sample.num_image_per_prompt,
+        num_replicas=world_size,
+        rank=rank,
+        seed=42
+    )
+
+    # Create a DataLoader; note that shuffling is not needed here because it’s controlled by the Sampler.
+    train_dataloader = DataLoader(
+        train_dataset,
+        batch_sampler=train_sampler,
+        num_workers=1,
+        collate_fn=GenevalPromptImageDataset.collate_fn,
+        # persistent_workers=True
+    )
+
+    test_dataloader = DataLoader(
+        test_dataset,
+        sampler=DistributedSampler(test_dataset, shuffle=False),
+        batch_size=config.sample.test_batch_size,
+        collate_fn=GenevalPromptImageDataset.collate_fn,
+        shuffle=False,
+        num_workers=8,
+    )
 
     if config.sample.num_image_per_prompt == 1:
         config.per_prompt_stat_tracking = False
