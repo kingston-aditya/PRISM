@@ -1,2 +1,2 @@
 # 8 GPU
-torchrun --standalone --nproc_per_node=2 --master_port=19501 train_qwenimage_edit.py --config config/grpo.py:counting_qwenimage_edit_2gpu
+accelerate launch --config_file ./config/deepspeed_zero3.yaml --num_processes=4 --main_process_port=19501 train_qwenimage_edit.py --config ./config/grpo.py:counting_qwenimage_edit_4gpu
