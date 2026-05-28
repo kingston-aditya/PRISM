@@ -1,1 +1,0 @@
-python /nfshomes/asarkar6/aditya/PRISM/dreamengine/src/scripts/eval/demo.py

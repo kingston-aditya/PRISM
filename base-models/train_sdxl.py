@@ -17,7 +17,6 @@ import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint
 import transformers
-from transformers import CLIPImageProcessor, CLIPVisionModel, CLIPVisionModelWithProjection
 from torchvision.transforms.functional import crop
 
 from accelerate import Accelerator
@@ -30,12 +29,10 @@ from torchvision import transforms
 from torchvision.transforms.functional import crop
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, PretrainedConfig
-
-from config import get_config
-fixn_args = get_config()
+import transformers
 
 import sys
-sys.path.insert(1, fixn_args["repo_path"])
+sys.path.insert(1, os.path.dirname(os.getcwd()))
 
 import diffusers
 from diffusers import (
@@ -59,10 +56,7 @@ from diffusers.utils.torch_utils import is_compiled_module
 
 import pdb as pdb_original
 import glob, json
-
-from pipeline1 import EncoderModel, ProjectLayer
-from trinity_dataloader import SDXLTrainDataset, SDXLInferDataset
-
+from dataset.trinity_dataloader import SDXLTrainDataset, SDXLInferDataset
 
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
@@ -524,12 +518,12 @@ def read_eval_dataset(path_name):
     return json_obj
 
 
-def read_Trinity_dataset():
+def read_Trinity_dataset(args):
     # read multiple files
     json_obj = {"image":[], "prompt":[], "object":[]}
 
-    for name in glob.glob("/nfshomes/asarkar6/trinity/train_data/*.jsonl"):
-        with open(os.path.join("/nfshomes/asarkar6/trinity/train_data/", name), "r") as f:
+    for name in glob.glob(os.path.join(args.dataset_name, "*.jsonl")):
+        with open(os.path.join(args.dataset_name, name), "r") as f:
             for line in f:
                 try:
                     temp = json.loads(line.strip())
@@ -545,28 +539,6 @@ def read_Trinity_dataset():
                 except json.JSONDecodeError as e:
                     print(f"Failed to decode JSON for line: {line.strip()} with error: {e}")
     return json_obj
-
-# encode object prompt - Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
-def encode_object(batch, img_encoder, img_tokenizer):
-    object_embeds_list = []
-
-    # create the image embeddings
-    with torch.no_grad():
-        idx = 0
-        
-        # SigLIP encoding
-        try:
-            img_inputs = img_tokenizer(images = batch, return_tensors="pt",)
-            img_inputs = img_inputs.to(img_encoder.device)
-            img_embeds = img_encoder(**img_inputs, output_hidden_states=True, return_dict=False,)
-
-            # We are interested in the token embeddings of the image encoder
-            idx+=1
-            object_embeds_list.append(img_embeds)
-        except:
-            raise ValueError("Something went wrong in image encoding")
-
-    return img_embeds
 
 # Encode text prompt - Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
 def encode_prompt(txt_toks_1, txt_toks_2, text_encoders):
@@ -592,11 +564,6 @@ def encode_prompt(txt_toks_1, txt_toks_2, text_encoders):
     prompt_embeds = torch.concat(prompt_embeds_list, dim=-1)
     pooled_prompt_embeds = pooled_prompt_embeds.view(bs_embed, -1)
     return prompt_embeds, pooled_prompt_embeds
-
-def multimodal_encode_prompt(prompt_embeds, image_embeds):
-    # concat them across dim 1
-    cat_prompt_embeds = torch.cat((prompt_embeds, image_embeds), dim=-2)
-    return cat_prompt_embeds
 
 def preprocess_train(examples, args):
         # apply transforms
@@ -652,7 +619,7 @@ def main(args):
         )
 
     accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
-    kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    kwargs = DistributedDataParallelKwargs(find_unused_parameters=False)
 
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
@@ -786,12 +753,6 @@ def main(args):
                     unet_lora_layers_to_save = convert_state_dict_to_diffusers(get_peft_model_state_dict(model))
                 else:
                     pass
-            
-            # save the rem 2 models
-            # proj_layer_clean = unwrap_model(proj_layer)
-            # trinity_clean = unwrap_model(trinity)
-            torch.save(proj_layer.state_dict(), os.path.join(output_dir, "proj_checkpoint"+".pt"))
-            torch.save(trinity.state_dict(), os.path.join(output_dir, "trinity_checkpoint"+".pt"))
 
             for _, model in enumerate(models):
                 if weights:
@@ -864,26 +825,8 @@ def main(args):
     # Optimizer creation
     lora_layers = filter(lambda p: p.requires_grad, unet.parameters())
 
-    # Load the CLIPImageProcessors
-    img_tokenizer_one = CLIPImageProcessor.from_pretrained("openai/clip-vit-large-patch14", cache_dir=args.cache_dir)
-    img_tokenizer_two = CLIPImageProcessor.from_pretrained("laion/CLIP-ViT-bigG-14-laion2B-39B-b160k", cache_dir=args.cache_dir)
-
-    # load image encoders
-    img_encoder_one = CLIPVisionModel.from_pretrained("openai/clip-vit-large-patch14", cache_dir=args.cache_dir)
-    img_encoder_two = CLIPVisionModelWithProjection.from_pretrained("laion/CLIP-ViT-bigG-14-laion2B-39B-b160k", cache_dir=args.cache_dir)
-
-    # no need to train image encoders
-    img_encoder_one.requires_grad_(False)
-    img_encoder_two.requires_grad_(False)
-    img_encoder_one.to(accelerator.device, dtype=weight_dtype)
-    img_encoder_two.to(accelerator.device, dtype=weight_dtype)
-
-    # b) get the tokenizers and encoders ready
-    img_tokenizers = [img_tokenizer_one, img_tokenizer_two]
-    img_encoders = [img_encoder_one, img_encoder_two]
-
     # load the dataset
-    json_obj = read_Trinity_dataset()
+    json_obj = read_Trinity_dataset(args)
 
     # Get the specified interpolation method from the args
     # interpolation = getattr(transforms.InterpolationMode, args.image_interpolation_mode.upper(), None)
@@ -912,14 +855,6 @@ def main(args):
         num_workers=args.dataloader_num_workers,
     )
 
-    # load the transformer
-    trinity = EncoderModel(2048, 2048, num_blocks=args.blocks)
-    proj_layer = ProjectLayer(2048, 2688)
-
-    # requires grad is true
-    trinity.requires_grad_(True)
-    proj_layer.requires_grad_(True)
-
     # load the weights
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
 
@@ -929,12 +864,7 @@ def main(args):
         models = [unet]
         cast_training_params(models, dtype=torch.float32)
 
-        for m in [trinity, proj_layer]:
-            for param in m.parameters():
-                if param.requires_grad:
-                    param.data = param.to(dtype=torch.float32)
-
-    params_to_optimize = list(lora_layers) + list(trinity.parameters()) + list(proj_layer.parameters())
+    params_to_optimize = list(lora_layers)
     optimizer = optimizer_class(
         params_to_optimize,
         lr=args.learning_rate,
@@ -956,12 +886,8 @@ def main(args):
         num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
     )
 
-    # load trinity to cuda
-    trinity.to(accelerator.device, dtype=torch.float32)
-    proj_layer.to(accelerator.device, dtype=torch.float32)
-
     # Prepare everything with our `accelerator`.
-    unet, optimizer, train_dataloader, lr_scheduler, trinity, proj_layer = accelerator.prepare(unet, optimizer, train_dataloader, lr_scheduler, trinity, proj_layer)
+    unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(unet, optimizer, train_dataloader, lr_scheduler)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -974,7 +900,7 @@ def main(args):
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
-        accelerator.init_trackers("text2image-fine-tune", config=vars(args))
+        accelerator.init_trackers("sdxl-base-SFT", config=vars(args))
 
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
@@ -1000,15 +926,6 @@ def main(args):
             # load the unet
             accelerator.load_state(input_dir)
 
-            # load the models and upcast it to float32
-            trinity.load_state_dict(torch.load(os.path.join(input_dir, "trinity_checkpoint"+".pt")))
-            proj_layer.load_state_dict(torch.load(os.path.join(input_dir, "proj_checkpoint"+".pt")))
-            for m in [trinity, proj_layer]:
-                for param in m.parameters():
-                    if param.requires_grad:
-                        param.data = param.to(dtype=torch.float32)
-
-
             global_step = int(path_name.split("-")[-1])
             initial_global_step = global_step
             first_epoch = global_step // num_update_steps_per_epoch
@@ -1030,13 +947,11 @@ def main(args):
     )
 
     unet.train()
-    trinity.train()
-    proj_layer.train()
     
     for epoch in range(first_epoch, args.num_train_epochs):
         train_loss = 0.0
         for step, batch in enumerate(train_dataloader):
-            with accelerator.accumulate(unet), accelerator.accumulate(trinity), accelerator.accumulate(proj_layer):
+            with accelerator.accumulate(unet):
                 # Convert images to latent space
                 batch["original_sizes"], batch["crop_top_lefts"], batch["pixel_values"] = preprocess_train(batch["pixel_values"], args)
                 batch["pixel_values"] = torch.stack(batch["pixel_values"])
@@ -1048,62 +963,14 @@ def main(args):
                     text_encoders=[text_encoder_one, text_encoder_two],
                 )
 
-                # encode object images
-                object_prompt_embeds = []
-                # print(len(batch["object_prompt_embeds"][0]))
-                flag = 0
-                for _, item in enumerate(batch["object_prompt_embeds"]):
-                    if len(item) > 0:
-                        try:
-                            encoded_object = encode_object(item, img_encoders, img_tokenizers)
-                            tok_sz = encoded_object.shape[-2]//len(item)
-                            if len(item) == 1:
-                                encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0), encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
-                            elif len(item) == 2:
-                                encoded_object = torch.cat((encoded_object, encoded_object[0,:tok_sz,:].unsqueeze(0)), dim=-2)
-                            else:
-                                pass
-                            encoded_object = encoded_object.to(accelerator.device)
-                        except Exception as e:
-                            print("padding being done")
-                            flag = 1
-                    else:
-                        print("Eps-padding - Corrupt Object !!! L-1062")
-                        encoded_object = []
-                        flag = 1
-
-                    object_prompt_embeds.append(encoded_object)
-                
-                # for any case of padding, remove that batch
-                if flag == 1:
-                    print("FLAG is 1.. something wrong happened!!")
-                    continue
-
-                object_prompt_embeds = torch.stack(object_prompt_embeds).squeeze()
-
                 # get multimodal prompts
                 txt_tok_len = prompt_embeds.shape[-2]
-                img_tok_len = object_prompt_embeds.shape[-2]
 
                 # normalize everything
-                object_prompt_embeds = object_prompt_embeds/torch.norm(object_prompt_embeds, p=2, dim=-1, keepdim=True)
                 prompt_embeds = prompt_embeds/torch.norm(prompt_embeds, p=2, dim=-1, keepdim=True)
 
                 # with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
-                object_prompt_embeds = proj_layer(object_prompt_embeds)
-                prompt_embeds = multimodal_encode_prompt(prompt_embeds, object_prompt_embeds)
                 prompt_embeds = prompt_embeds.to(accelerator.device, dtype=weight_dtype)
-
-                # normalize everything
-                prompt_embeds = prompt_embeds/torch.norm(prompt_embeds, p=2, dim=-1, keepdim=True)
-
-                # get the trinity embeds
-                # trinity_embeds = prompt_embeds
-                # with torch.amp.autocast(device_type="cuda", enabled=True, dtype=torch.float16):
-                trinity_embeds = trinity(prompt_embeds, prompt_embeds, txt_tok_len, img_tok_len, typ=args.mask_typ)
-                
-                # normalize everything
-                trinity_embeds = trinity_embeds/torch.norm(trinity_embeds, p=2, dim=-1, keepdim=True)
 
                 model_input = vae.encode(batch["pixel_values"].to(accelerator.device, dtype=weight_dtype)).latent_dist.sample()
                 model_input = model_input * vae.config.scaling_factor
@@ -1142,17 +1009,17 @@ def main(args):
                     [compute_time_ids(s, c) for s, c in zip(batch["original_sizes"], batch["crop_top_lefts"])]
                 )
 
-                if torch.isnan(trinity_embeds).any() or torch.isnan(pooled_prompt_embeds).any():
+                if torch.isnan(prompt_embeds).any() or torch.isnan(pooled_prompt_embeds).any():
                     print("!!! NAN INPUTS!!!")
                     continue
 
                 # Predict the noise residual
                 unet_added_conditions = {"time_ids": add_time_ids}
-                # unet_added_conditions.update({"text_embeds": pooled_prompt_embeds})
+                unet_added_conditions.update({"text_embeds": pooled_prompt_embeds})
                 model_pred = unet(
                     noisy_model_input,
                     timesteps,
-                    trinity_embeds,
+                    prompt_embeds,
                     added_cond_kwargs=unet_added_conditions,
                     return_dict=False,
                 )[0]
