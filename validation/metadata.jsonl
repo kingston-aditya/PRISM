@@ -1,0 +1,9 @@
+{"prompt": "A steaming coffee mug sits next to my open laptop.", "object": [{"labels": "coffee mug", "img_pth": "images/0.png"}, {"labels": "laptop", "img_pth": "images/1.png"}]}
+{"prompt": "A dog and a cat playing with a ball.", "object": [{"labels": "dog", "img_pth": "images/2.png"}, {"labels": "cat", "img_pth": "images/3.png"}]}
+{"prompt": "A car and a motorcycle are moving towards the mountains.", "object": [{"labels": "car", "img_pth": "images/4.png"}, {"labels": "mountains", "img_pth": "images/5.png"}, {"labels": "motorcycle", "img_pth": "images/6.png"}]}
+{"prompt": "A dog is sitting in front of a building.", "object": [{"labels": "dog", "img_pth": "images/7.png"}, {"labels": "building", "img_pth": "images/8.png"}]}
+{"prompt": "A bird is flying towards a tower.", "object": [{"labels": "bird", "img_pth": "images/9.png"}, {"labels": "tower", "img_pth": "images/10.png"}]}
+{"prompt": "A bird and a fish bowl are sitting on top of a table.", "object": [{"labels": "bird", "img_pth": "images/11.png"}, {"labels": "table", "img_pth": "images/12.png"}, {"labels": "fish bowl", "img_pth": "images/13.png"}]}
+{"prompt": "A dog is sitting near a car.", "object": [{"labels": "dog", "img_pth": "images/14.png"}, {"labels": "car", "img_pth": "images/15.png"}]}
+{"prompt": "A cat is playing with a woman.", "object": [{"labels": "cat", "img_pth": "images/16.png"}, {"labels": "woman", "img_pth": "images/17.png"}]}
+{"prompt": "A car stands in front of a building.", "object": [{"labels": "car", "img_pth": "images/18.png"}, {"labels": "building", "img_pth": "images/19.png"}]}

@@ -1,0 +1,4 @@
+[
+    {"type": "jsonl","path":"/nfshomes/asarkar6/trinity/trinity-data-real-combined.json","task":"I2I","number":100,"image_column":"file_name","text_column":null},
+    {"type": "jsonl","path":"/nfshomes/asarkar6/trinity/trinity-data-real-combined.json","task":"T2I","number":100,"image_column":"file_name","text_column":"prompt"}
+]

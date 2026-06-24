@@ -1,2 +1,3 @@
-# PRISM
-Repository for PRISM - Prompt Responsive Image Synthesis Model.
+# Masked Trinity
+Repository for Masked Trinity.
+Trinity's back home... 
