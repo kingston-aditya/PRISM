@@ -16,6 +16,8 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.utils.checkpoint
+from torchvision import transforms
+from torchvision.transforms import functional as F
 import transformers
 from accelerate import Accelerator
 from accelerate.logging import get_logger
@@ -78,6 +80,7 @@ logger = get_logger(__name__)
 import os
 import json
 
+# Dataset curation
 def get_captions_with_random_objects(segments, image, max_obj_num=3, max_size=0.5):
     caption_object_list = []
     # Calculate the max allowed object area based on max_size
@@ -171,12 +174,6 @@ def get_random_objects_with_name(segments, image, max_obj_num=3, max_size=0.5):
 
     return objects_with_name
 
-
-
-import torch
-from torchvision import transforms
-from torchvision.transforms import functional as F
-
 class RoundTo16:
     def __init__(self):
         pass
@@ -191,8 +188,6 @@ class RoundTo16:
 
         # Resize image to new dimensions
         return F.resize(img, (new_height, new_width), interpolation=F.InterpolationMode.BILINEAR)
-
-
 
 class InterleavedDataset(Dataset):
     def __init__(
