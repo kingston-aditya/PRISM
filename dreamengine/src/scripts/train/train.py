@@ -34,6 +34,10 @@ from tqdm.auto import tqdm
 from connector import MultimodalFusionModel
 
 import sys
+sys.path.insert(1, "/nfshomes/asarkar6/aditya/PRISM/")
+from dataloaders.coco_dataloader import MS_COCO
+
+
 sys.path.insert(1, "/nfshomes/asarkar6/aditya/PRISM/dreamengine/src/diffusers/src/")
 import diffusers
 from diffusers.pipelines.stable_diffusion_3.pipeline_qwen_vl_stable_diffusion_3 import QwenVLStableDiffusion3Pipeline
@@ -52,12 +56,12 @@ from diffusers.utils import (
     check_min_version,
     is_wandb_available,
 )
-from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
 from diffusers.utils.torch_utils import is_compiled_module
 
 
 import wandb
-from datasets import load_dataset
+import os
+import json
 
 
 import pdb as pdb_original
@@ -76,323 +80,6 @@ class ForkedPdb(pdb_original.Pdb):
 
 
 logger = get_logger(__name__)
-
-import os
-import json
-
-# Dataset curation
-def get_captions_with_random_objects(segments, image, max_obj_num=3, max_size=0.5):
-    caption_object_list = []
-    # Calculate the max allowed object area based on max_size
-    max_object_area = max_size * image.width * image.height
-
-    for segment in segments:
-        caption = segment["labels"]
-
-        caption_object_list.append(caption)
-
-        x1 = 0 if segment["xmin"] is None else int(segment["xmin"])
-        y1 = 0 if segment["ymin"] is None else int(segment["ymin"])
-        x2 = image.width if segment["xmax"] is None else int(segment["xmax"])
-        y2 = image.height if segment["ymax"] is None else int(segment["ymax"])
-
-        # Scale the coordinates according to the image size
-        x1, x2 = x1 * image.width / 1000, x2 * image.width / 1000
-        y1, y2 = y1 * image.height / 1000, y2 * image.height / 1000
-        width, height = x2 - x1, y2 - y1
-        # Calculate the area of the object
-        object_area = width * height
-        # Check if the object's area is within the allowed maximum size
-        if object_area <= max_object_area:
-            # Crop the object from the image
-            object_image = image.crop((x1, y1, x2, y2))
-            # Append (name, object_image) to the list
-            caption_object_list.append(object_image)
-
-    # If number of objects exceeds max_obj_num, randomly select max_obj_num objects from all objects, do not change the captions, only filter the object image
-
-    # get the index of object from caption_object_list
-    object_index = [i for i in range(len(caption_object_list)) if type(caption_object_list[i]) == Image.Image]
-    caption_index = [i for i in range(len(caption_object_list)) if type(caption_object_list[i]) == str]
-
-    # filter the object image
-    if len(object_index) > max_obj_num:
-        object_index = random.sample(object_index, max_obj_num)
-
-    # remove the object not in object_index
-    keep_index = sorted(object_index + caption_index)
-    caption_object_list = [caption_object_list[i] for i in keep_index]
-
-    #  example:   [' Two metal chairs',
-    #  <PIL.Image.Image image mode=RGB size=587x811>,
-    #  ' with',
-    #  ' grey cushions',
-    #  <PIL.Image.Image image mode=RGB size=404x146>,
-    #  ',',
-    #  ' turquoise pillows',
-    #  <PIL.Image.Image image mode=RGB size=332x193>,
-    #  <PIL.Image.Image image mode=RGB size=499x255>,
-    #  ', and',
-    #  ' a table',
-    #  <PIL.Image.Image image mode=RGB size=837x309>,
-    #  ' with flowers on outdoor patio']
-
-    return caption_object_list
-
-
-def get_random_objects_with_name(segments, image, max_obj_num=3, max_size=0.5):
-    # A list to store tuples of (name, object_image)
-    objects_with_name = []
-
-    # Calculate the max allowed object area based on max_size
-    max_object_area = max_size * image.width * image.height
-
-    for segment in segments:
-        caption = segment["labels"]
-
-        x1 = 0 if segment["xmin"] is None else int(segment["xmin"])
-        y1 = 0 if segment["ymin"] is None else int(segment["ymin"])
-        x2 = image.width if segment["xmax"] is None else int(segment["xmax"])
-        y2 = image.height if segment["ymax"] is None else int(segment["ymax"])
-
-        # Scale the coordinates according to the image size
-        x1, x2 = x1 * image.width / 1000, x2 * image.width / 1000
-        y1, y2 = y1 * image.height / 1000, y2 * image.height / 1000
-        width, height = x2 - x1, y2 - y1
-        # Calculate the area of the object
-        object_area = width * height
-        # Check if the object's area is within the allowed maximum size
-        if object_area <= max_object_area:
-            # Crop the object from the image
-            object_image = image.crop((x1, y1, x2, y2))
-            # Append (name, object_image) to the list
-            objects_with_name.append((caption.strip(), object_image))
-
-    # If number of objects exceeds max_obj_num, randomly select max_obj_num objects
-    if len(objects_with_name) > max_obj_num:
-        objects_with_name = random.sample(objects_with_name, max_obj_num)
-
-    return objects_with_name
-
-class RoundTo16:
-    def __init__(self):
-        pass
-
-    def __call__(self, img):
-        # Get original dimensions
-        width, height = img.size
-
-        # Round dimensions to nearest multiple of 16
-        new_width = round(width / 16) * 16
-        new_height = round(height / 16) * 16
-
-        # Resize image to new dimensions
-        return F.resize(img, (new_height, new_width), interpolation=F.InterpolationMode.BILINEAR)
-
-class InterleavedDataset(Dataset):
-    def __init__(
-        self,
-        dataset_config,
-        size=512,
-        center_crop=False,
-        cache_dir=None,
-    ):
-        self.size = size
-        self.center_crop = center_crop
-
-
-        print("loading dataset")
-      
-        # Load the dataset
-        self.image_column = dataset_config['image_column']
-        self.caption_column = dataset_config['text_column']
-        
-        self.target_image_column = dataset_config.get("target_image_column", None)
-
-        self.segment_column = dataset_config.get("segment_column", None)
-
-        self.is_jsonl_dataset = dataset_config['type']=='jsonl'
-
-        self.task = dataset_config['task']
-
-        if dataset_config['type']=='image_folder':
-            self.dataset = ImageFolder(dataset_config['path'])
-        elif dataset_config['type']=='jsonl':
-            self.dataset = load_dataset("json", data_files=dataset_config['path'])['train']
-        elif dataset_config['type']=='hf':
-            self.dataset = load_dataset(
-                dataset_config['path'],
-                cache_dir=cache_dir,
-            )['train']
-        elif dataset_config['type']=='hf-ultraedit':
-            self.dataset = load_dataset("parquet", data_files=[os.path.join("./datasets/UltraEdit/data",i) for i in os.listdir("./datasets/UltraEdit/data")[:1000]],cache_dir=cache_dir)['train']
-        else:
-            raise ValueError(f"Unsupported dataset type: {dataset_config['type']}")
-
-        print("loading successful")
-        print("center_crop",center_crop)
-
-        # Define the train transformations
-        self.image_transforms = transforms.Compose(
-            [
-                transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR),
-                transforms.CenterCrop(size) if center_crop else transforms.RandomCrop(size),
-                transforms.ToTensor(),
-                transforms.Normalize([0.5], [0.5]),
-            ]
-        )
-
-        self.crop_transforms = transforms.Compose(
-            [
-                transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR),
-                transforms.CenterCrop(size) if center_crop else transforms.RandomCrop(size),
-            ]
-        )
-
-        self.object_image_transforms = transforms.Compose(
-            [
-                transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR, max_size=600),
-                RoundTo16(),
-            ]
-        )
-
-        # Define the transform pipeline
-        self.object_image_transforms_pixel = transforms.Compose(
-            [
-                transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR, max_size=600),
-                RoundTo16(),
-                transforms.ToTensor(),
-                transforms.Normalize([0.5], [0.5]),
-            ]
-        )
-
-        print("init successful")
-
-    def __len__(self):
-        return len(self.dataset)
-
-    def __getitem__(self, index):
-        example = {}
-        # Load and process image
-        try:
-            if self.is_jsonl_dataset:
-                image_url = self.dataset[index][self.image_column]
-                if image_url.startswith("http"):
-                    image = Image.open(requests.get(image_url, stream=True).raw)
-                else:
-                    image = Image.open(image_url)
-                
-                if self.target_image_column:
-                    target_image_url = self.dataset[index][self.target_image_column]
-                    if target_image_url.startswith("http"):
-                        target_image = Image.open(requests.get(target_image_url, stream=True).raw)
-                    else:
-                        target_image = Image.open(target_image_url)
-                
-                if self.segment_column:
-                    segments = self.dataset[index][self.segment_column]
-
-                if segments is None:
-                    new_index = random.randint(0,len(self.dataset)-1)
-                    return self.__getitem__(new_index)
-                
-            else: 
-                image = self.dataset[index][self.image_column]
-
-                if self.target_image_column:
-                    target_image = self.dataset[index][self.target_image_column]
-                    
-            image = exif_transpose(image)
-            if not image.mode == "RGB":
-                image = image.convert("RGB")
-
-        except Exception as e:
-            # random pick an image , re get the item
-            print(e)
-            new_index = random.randint(0,len(self.dataset)-1)
-            return self.__getitem__(new_index)
-        
-        example["tensor_image"] = self.image_transforms(image)
-        example["target_image"] = self.image_transforms(target_image) if self.target_image_column else None
-        example["target_image"] = self.object_image_transforms_pixel(image) if self.segment_column else None
-
-        if self.task == "OBJ2I_V2":
-            example["obj_name_image"] = get_captions_with_random_objects(segments, self.object_image_transforms(image))
-        elif self.task == "OBJ2I":
-            example["obj_name_image"] = get_random_objects_with_name(segments, self.object_image_transforms(image))
-        else:
-            example["obj_name_image"] = None 
-
-        example["pil_image"] = self.crop_transforms(image)
-
-        if self.caption_column:
-            example["prompt"] = str(self.dataset[index][self.caption_column])
-        else:
-            example["prompt"] = None
-        
-        example["task"] = self.task
-
-        return example
-
-
-class ConcatDataset(Dataset):
-    def __init__(self, datasets, dataset_lengths):
-        """
-        Initializes the ConcatDataset with a list of datasets and respective lengths.
-        
-        :param datasets: List of datasets to concatenate. Each should be an instance of a subclass of Dataset.
-        :param dataset_lengths: List of integers specifying how many samples to take from each dataset.
-        """
-        assert len(datasets) == len(dataset_lengths), "Length of datasets and dataset_lengths must match"
-        self.datasets = datasets
-        self.dataset_lengths = dataset_lengths
-        self.cumulative_sizes = self._compute_cumulative_sizes()
-
-    def _compute_cumulative_sizes(self):
-        cumulative_sizes = [sum(self.dataset_lengths[:i+1]) for i in range(len(self.dataset_lengths))]
-        return cumulative_sizes
-
-    def __len__(self):
-        return self.cumulative_sizes[-1]
-
-    def __getitem__(self, index):
-        dataset_idx = self._find_dataset(index)
-        if dataset_idx == 0:
-            sample_idx = index
-        else:
-            sample_idx = index - self.cumulative_sizes[dataset_idx - 1]
-        
-        # Ensure sample index is within the desired length for the respective dataset
-        if sample_idx >= self.dataset_lengths[dataset_idx]:
-            raise IndexError("Sample index out of range for dataset length constraint.")
-        
-        return self.datasets[dataset_idx][sample_idx]
-
-    def _find_dataset(self, index):
-        for i, size in enumerate(self.cumulative_sizes):
-            if index < size:
-                return i
-        raise ValueError("Index out of range")
-
-
-def collate_fn(examples):
-    pixel_values = [example["tensor_image"] for example in examples]
-    prompts = [example["prompt"] for example in examples]
-    images = [example["pil_image"] for example in examples]
-    tasks = [example["task"] for example in examples]
-
-    obj_name_images = [example["obj_name_image"] for example in examples]
-
-    targets = [example["target_image"] for example in examples]
-
-    pixel_values = torch.stack(pixel_values)
-    pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
-
-    targets_pixel_values = torch.stack(targets) if targets[0] is not None else None
-    targets_pixel_values = targets_pixel_values.to(memory_format=torch.contiguous_format).float() if targets_pixel_values is not None else None
-
-    batch = {"tensor_image": pixel_values, "prompt": prompts, "pil_image": images, "task": tasks, "target_image": targets_pixel_values, "obj_name_image":obj_name_images}
-    return batch
 
 def log_validation(
     pipeline,
@@ -446,7 +133,7 @@ def log_validation(
 
     return images
 
-def load_sharded_model(config_path, index_path, bin_files_folder, qwenvl2_model, sd3_model, device='cpu'):
+def load_sharded_model(model, config_path, index_path, bin_files_folder, device='cpu'):
     """
     Loads a sharded Hugging Face model from multiple binary files.
 
@@ -463,10 +150,6 @@ def load_sharded_model(config_path, index_path, bin_files_folder, qwenvl2_model,
     print("Loading model configuration...")
     with open(config_path, 'r') as f:
         config = json.load(f)
-    
-    # Initialize the model using the configuration
-    print("Initializing the model based on the configuration...")
-    model = QwenVLSD3_DirectMap_Transformer2DModel(qwenvl2_model, sd3_model)
     
     # Step 2: Load the Model Index
     print("Loading model index file...")
@@ -499,7 +182,6 @@ def load_sharded_model(config_path, index_path, bin_files_folder, qwenvl2_model,
         # Common scenarios:
         # a) The entire state_dict is stored directly
         # b) The state_dict is nested under a key like 'state_dict'
-
         if isinstance(bin_state, dict):
             if 'state_dict' in bin_state:
                 partial_state = bin_state['state_dict']
@@ -534,6 +216,7 @@ def load_sharded_model(config_path, index_path, bin_files_folder, qwenvl2_model,
 
     print("Model loaded successfully.")
     return model
+
 
 def parse_args(input_args=None):
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
@@ -611,7 +294,7 @@ def parse_args(input_args=None):
     parser.add_argument("--lr_warmup_steps", type=int, default=500, help="Number of warmup steps for learning rate scheduler.")
     parser.add_argument("--lr_num_cycles", type=int, default=1, help="Number of cycles for cosine_with_restarts scheduler.")
     parser.add_argument("--lr_power", type=float, default=1.0, help="Power factor of the polynomial scheduler.")
-    parser.add_argument("--dataloader_num_workers", type=int, default=16, help="Number of subprocesses for data loading.")
+    parser.add_argument("--dataloader_num_workers", type=int, default=8, help="Number of subprocesses for data loading.")
     parser.add_argument("--weighting_scheme", type=str, default="logit_normal", choices=["sigma_sqrt", "logit_normal", "mode", "cosmap"], help="Scheme for weighting.")
     parser.add_argument("--logit_mean", type=float, default=0.0, help="Mean for logit_normal weighting scheme.")
     parser.add_argument("--logit_std", type=float, default=1.0, help="Standard deviation for logit_normal weighting scheme.")
@@ -646,102 +329,84 @@ def parse_args(input_args=None):
 
 
 class QwenVLSD3_Perceiver_Model(QwenVLSD3_DirectMap_Transformer2DModel):
-    def __init__(self, qwenvl_model, sd3_dit_model, connector=None, mlp_dim=4096, linear_alignment=False, lmm_output_layer_index=-1, do_lmm_post_norm=False):
-        super().__init__()
-
-        self.lmm = qwenvl_model
-        self.dit = sd3_dit_model
-
-        self.lmm_output_layer_index = lmm_output_layer_index
-
-        self.do_lmm_post_norm = do_lmm_post_norm
-        self.norm_lmm_out = LlamaRMSNorm(self.lmm.config.hidden_size)
-
-        self.pooled_proj = nn.Linear(4096,2048)
+    def __init__(self, qwenvl_model, sd3_dit_model, connector=None,  mlp_dim=4096, linear_alignment=False, lmm_output_layer_index=-1, do_lmm_post_norm=False):
+        # initializes the base parameters of parent class
+        super().__init__(qwenvl_model, sd3_dit_model, mlp_dim, linear_alignment, lmm_output_layer_index, do_lmm_post_norm)
 
         self.connector = connector if connector is not None else None
 
-        if not linear_alignment:
-            self.input_embeds_align_mlp = nn.Sequential(
-                nn.Linear(self.lmm.config.hidden_size, mlp_dim),
-                nn.SiLU(),
-                nn.Linear(mlp_dim, self.dit.config.caption_projection_dim)
-            )
+        # freeze stuff
+        for param in self.dit.parameters():
+            param.requires_grad = False
+        for param in self.lmm.parameters():
+            param.requires_grad = False
+        for param in self.input_embeds_align_mlp.parameters():
+            param.requires_grad = False
+        for param in self.condition_embeds_align_mlp.parameters():
+            param.requires_grad = False
 
-            self.condition_embeds_align_mlp = nn.Sequential(
-                nn.Linear(self.lmm.config.hidden_size, mlp_dim),
-                nn.SiLU(),
-                nn.Linear(mlp_dim, self.dit.config.caption_projection_dim)
-            )
-        else:
-            self.input_embeds_align_mlp = nn.Linear(self.lmm.config.hidden_size, self.dit.config.caption_projection_dim)
-            self.condition_embeds_align_mlp = nn.Linear(self.lmm.config.hidden_size, self.dit.config.caption_projection_dim)
+        # unfreeze stuff
+        for param in self.connector.parameters():
+            param.requires_grad = True
             
     
     def forward(self, lmm_input_ids, lmm_attention_mask, siglip_inputs, dit_hidden_states, dit_time_step, dit_text_condition=None,pooled_dit_text_condition=None,  lmm_pixel_values=None, lmm_image_grid_thw=None, vit_skip_ratio=None):
         # get LMM hidden states
-        lmm_outputs_last_hidden_state = self.lmm(
-            input_ids=lmm_input_ids,
-            attention_mask=lmm_attention_mask,
-            pixel_values=lmm_pixel_values,
-            image_grid_thw=lmm_image_grid_thw,
-            output_hidden_states=True
-        )['hidden_states'][self.lmm_output_layer_index]
+        with torch.no_grad():
+            lmm_outputs_last_hidden_state = self.lmm(
+                input_ids=lmm_input_ids,
+                attention_mask=lmm_attention_mask,
+                pixel_values=lmm_pixel_values,
+                image_grid_thw=lmm_image_grid_thw,
+                output_hidden_states=True
+            )['hidden_states'][self.lmm_output_layer_index]
 
-        if vit_skip_ratio and isinstance(lmm_pixel_values,torch.Tensor):
-            vit_feature = self.lmm.visual(lmm_pixel_values,lmm_image_grid_thw)
-            image_mask = lmm_input_ids == self.lmm.config.image_token_id
-            # extract the masked hidden stages and add the vit features according to the ratio (1-vit_skip_ratio)*hidden_states + vit_skip_ratio*vit_features
-            image_hidden_states = lmm_outputs_last_hidden_state[image_mask]
-            blended_features = (1 - vit_skip_ratio) * image_hidden_states + vit_skip_ratio * vit_feature
-            lmm_outputs_last_hidden_state[image_mask] = blended_features
-        
         # get Connector hidden states
-        connector_output_tokens = self.connector(
+        dit_encoder_conn_proj = self.connector(
             input_ids=siglip_inputs['input_ids'],
             attention_mask=siglip_inputs['attention_mask'],
             pixel_values=siglip_inputs['pixel_values']
         )
+        dit_encoder_conn_pooled_proj = dit_encoder_conn_proj.mean(dim=1)
 
-        if self.do_lmm_post_norm:
-            lmm_outputs_last_hidden_state = self.norm_lmm_out(lmm_outputs_last_hidden_state)
+        with torch.no_grad():
+            # Encoder Hidden States and Pooled Hidden States from transformer
+            dit_encoder_hidden_states_proj = self.input_embeds_align_mlp(lmm_outputs_last_hidden_state)
+            dit_encoder_hidden_states_pooled_proj = self.condition_embeds_align_mlp(lmm_outputs_last_hidden_state.mean(dim=1))
 
         
-        # Encoder Hidden States and Pooled Hidden States from transformer
-        dit_encoder_hidden_states_proj = self.input_embeds_align_mlp(lmm_outputs_last_hidden_state)
-        dit_encoder_hidden_states_pooled_proj = self.condition_embeds_align_mlp(lmm_outputs_last_hidden_state.mean(dim=1))
-
-        # Encoder Hidden States and Pooled Hidden States from connector
-        dit_encoder_conn_proj = self.input_embeds_align_mlp(connector_output_tokens)
-        dit_encoder_conn_pooled_proj = self.condition_embeds_align_mlp(connector_output_tokens.mean(dim=1))
         # print("IHS size", lmm_outputs_last_hidden_state.shape)
         # print("HS Size", dit_encoder_hidden_states_proj.shape)
         # print("PHS Size", dit_encoder_hidden_states_pooled_proj.shape)
         # print("LM Yes or NO", self.do_lmm_post_norm)
 
-        # Time Condition for LMM
-        dit_time_embed = self.dit.time_text_embed.time_proj(dit_time_step)
-        dit_timesteps_emb = self.dit.time_text_embed.timestep_embedder(dit_time_embed.to(dtype=dit_encoder_hidden_states_pooled_proj.dtype))
-        dit_concat_condition = dit_encoder_hidden_states_pooled_proj + dit_timesteps_emb
-        dit_concat_condition_connector = dit_encoder_conn_pooled_proj + dit_timesteps_emb
+        with torch.no_grad():
+            # Time Condition for LMM
+            dit_time_embed = self.dit.time_text_embed.time_proj(dit_time_step)
+            dit_timesteps_emb = self.dit.time_text_embed.timestep_embedder(dit_time_embed.to(dtype=dit_encoder_hidden_states_pooled_proj.dtype))
+            dit_concat_condition = dit_encoder_hidden_states_pooled_proj + dit_timesteps_emb
+            dit_concat_condition_connector = dit_encoder_conn_pooled_proj + dit_timesteps_emb
 
-        # DiT prediction from transformer embeddings
-        dit_model_pred = self.dit.forward_with_lmm_encoder(
-                        hidden_states=dit_hidden_states,
-                        lmm_encoder_hidden_states=dit_encoder_hidden_states_proj,
-                        lmm_pooled_projections=dit_concat_condition,
-                        dit_text_condition=dit_text_condition,
-                        return_dict=False,
-                    )
+            # DiT prediction from transformer embeddings
+            dit_model_pred = self.dit.forward_with_lmm_encoder(
+                            hidden_states=dit_hidden_states,
+                            lmm_encoder_hidden_states=dit_encoder_hidden_states_proj,
+                            lmm_pooled_projections=dit_concat_condition,
+                            dit_text_condition=dit_text_condition,
+                            return_dict=False,
+                        )
 
-        # DiT prediction from connector embeddings
-        dit_model_pred_conn = self.dit.forward_with_lmm_encoder(
-                        hidden_states=dit_hidden_states,
-                        lmm_encoder_hidden_states=dit_encoder_conn_proj,
-                        lmm_pooled_projections=dit_concat_condition_connector,
-                        dit_text_condition=dit_text_condition,
-                        return_dict=False,
-                    )
+            # DiT prediction from connector embeddings
+            dit_model_pred_conn = self.dit.forward_with_lmm_encoder(
+                            hidden_states=dit_hidden_states,
+                            lmm_encoder_hidden_states=dit_encoder_conn_proj,
+                            lmm_pooled_projections=dit_concat_condition_connector,
+                            dit_text_condition=dit_text_condition,
+                            return_dict=False,
+                        )
+            
+            loss1 = F.mse_loss(dit_encoder_conn_proj, dit_encoder_hidden_states_proj)
+            loss2 = F.mse_loss(dit_model_pred, dit_model_pred_conn)
         
         return dit_model_pred, dit_model_pred_conn, dit_encoder_conn_proj, dit_encoder_hidden_states_proj
 
@@ -788,24 +453,21 @@ def main(args):
     processor = AutoProcessor.from_pretrained(args.pretrained_lmm_ckpt, max_pixels = args.input_resolution*28*28)
     qwenvl2_model = Qwen2VLForConditionalGeneration.from_pretrained(args.pretrained_lmm_ckpt, cache_dir=args.cache_dir, torch_dtype=torch.bfloat16)
     sd3_model = SD3Transformer2DModel.from_pretrained(args.pretrained_diffusion_ckpt, subfolder="transformer", cache_dir=args.cache_dir, torch_dtype=torch.bfloat16)
-    qwenvl2_model.to(accelerator.device, torch.bfloat16)
-    sd3_model.to(accelerator.device, torch.bfloat16)
 
     # load the siglip processor
     siglip_processor = SiglipProcessor.from_pretrained("google/siglip-base-patch16-224")
 
      # load the connector module
     connector = MultimodalFusionModel(num_latents=256)
-    connector.to(accelerator.device, dtype=torch.float16)
 
     if args.structure=="direct":
-        print("use direct structure")
-        transformer = QwenVLSD3_Perceiver_Model(qwenvl2_model, sd3_model, connector, linear_alignment=args.linear_alignment, lmm_output_layer_index=args.lmm_output_layer_index, do_lmm_post_norm=args.do_lmm_post_norm)
+        logger.info("use direct structure")
+        # transformer = QwenVLSD3_Perceiver_Model(qwenvl2_model, sd3_model, connector, linear_alignment=args.linear_alignment, lmm_output_layer_index=args.lmm_output_layer_index, do_lmm_post_norm=args.do_lmm_post_norm)
+        transformer = QwenVLSD3_DirectMap_Transformer2DModel(qwenvl2_model, sd3_model, linear_alignment=args.linear_alignment, lmm_output_layer_index=args.lmm_output_layer_index, do_lmm_post_norm=args.do_lmm_post_norm)
     else:
         transformer = QwenVLSD3Transformer2DModel(qwenvl2_model, sd3_model, linear_alignment=args.linear_alignment, lmm_output_layer_index=args.lmm_output_layer_index, do_lmm_post_norm=args.do_lmm_post_norm)
 
     transformer.requires_grad_(False)
-    transformer.to(accelerator.device, torch.bfloat16)
 
     # setup lora
     dit_lora_target_modules = []
@@ -877,14 +539,12 @@ def main(args):
     if args.resume_from_checkpoint:
         logger.info(f"Loading checkpoint from {args.resume_from_checkpoint}")
         transformer = load_sharded_model(
+            transformer,
             os.path.join(args.resume_from_checkpoint,"transformer", "config.json"),
             os.path.join(args.resume_from_checkpoint,"transformer", "diffusion_pytorch_model.bin.index.json"),
             os.path.join(args.resume_from_checkpoint,"transformer", ),
-            qwenvl2_model,
-            sd3_model,
             accelerator.device,
         )
-    del qwenvl2_model, sd3_model
     
     # unfreeze parameters
     params_to_optimize = []
@@ -926,6 +586,9 @@ def main(args):
     if args.unfreeze_connector:
         transformer.connector.siglip.requires_grad_(False)
 
+    accelerator.wait_for_everyone()
+
+    logger.info("resumed code")
 
     transformer_trainable_parameters = list(filter(lambda p: p.requires_grad, transformer.parameters()))
 
@@ -1014,26 +677,17 @@ def main(args):
             eps=args.adam_epsilon,
         )
 
-    # set up dataset
-    with open(args.dataset_config, "r") as f:
-        dataset_config = json.load(f)
-    
-    datasets = []
-    datasets_lengths = []
 
-    for subdataset_config in dataset_config:
-        datasets.append(InterleavedDataset(subdataset_config, size=args.output_resolution, center_crop=args.center_crop, cache_dir=args.cache_dir))
-        datasets_lengths.append(subdataset_config['number'])
-        print(subdataset_config)
-    
-    train_dataset = ConcatDataset(datasets, datasets_lengths)
+    # set up dataset
+    DATA_DIR = "/fs/cml-datasets/coco/"
+    train_dataset = MS_COCO(dataset_path = os.path.join(DATA_DIR, "annotations", "captions_val2017.json"))
     
     # data loader
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.train_batch_size,
         shuffle=True,
-        collate_fn=collate_fn,
+        collate_fn=train_dataset.collate_fn,
         num_workers=args.dataloader_num_workers,
     )
 
@@ -1041,7 +695,7 @@ def main(args):
     overrode_max_train_steps = False
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
 
-    print("num_update_steps_per_epoch",num_update_steps_per_epoch)
+    logger.info("num_update_steps_per_epoch",num_update_steps_per_epoch)
 
     if args.max_train_steps is None:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
@@ -1056,8 +710,11 @@ def main(args):
         power=args.lr_power,
     )
 
+    accelerator.wait_for_everyone()
+
     transformer, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(transformer, optimizer, train_dataloader, lr_scheduler)
-    
+    logger.info("Distributed Models.")
+
      # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     print("num_update_steps_per_epoch",num_update_steps_per_epoch)
@@ -1124,7 +781,7 @@ def main(args):
                     "content":[
                         {
                             "type": "image",
-                            "image": obj[1]
+                            "image": obj[1] is isinstance(Image.image)
                         } for obj in obj_names[0]
                     ]   
                     }
@@ -1151,7 +808,7 @@ def main(args):
                 )
 
                 # process the image inputs for Siglip
-                siglip_inputs = siglip_processor(text=prompts, images=obj_names, return_tensors="pt", padding="max_length", truncation=True)
+                siglip_inputs = siglip_processor(text=prompts, images=obj_names[:-1], return_tensors="pt", padding="max_length", truncation=True)
 
                 # Convert images to latent space
                 model_input = vae.encode(pixel_values).latent_dist.sample()

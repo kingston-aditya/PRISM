@@ -91,12 +91,12 @@ class MLPProjection(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(dim, hidden_dim),
             nn.GELU(),
-            nn.Linear(hidden_dim, dim)
+            nn.Linear(hidden_dim, hidden_dim)
         )
-        self.layer_norm = nn.LayerNorm(dim)
+        self.layer_norm = nn.LayerNorm(hidden_dim)
 
     def forward(self, x):
-        return x + self.layer_norm(self.net(x))
+        return self.layer_norm(self.net(x))
 
 
 # ==========================================
@@ -104,38 +104,20 @@ class MLPProjection(nn.Module):
 # ==========================================
 
 class MultimodalFusionModel(nn.Module):
-    def __init__(self, siglip_model_name="google/siglip-base-patch16-224", num_latents=128):
+    def __init__(self, dim, out_dim, num_latents=128):
         super().__init__()
-        # Load Siglip
-        self.siglip = SiglipModel.from_pretrained(siglip_model_name, torch_dtype=torch.float16)
-        dim = self.siglip.config.vision_config.hidden_size
-        
-        # Freeze SIGLIP completely
-        for param in self.siglip.parameters():
-            param.requires_grad = False
-            
+
         # Initialize Trainable Components
         # self.perceiver = PerceiverResampler(dim=dim, num_latents=num_latents)
         self.big_perceiver = DeepPerceiverResampler(dim=dim, num_latents=num_latents)
         self.ln_self = nn.LayerNorm(dim)
         
         # 2 Layer MLP Projection
-        self.mlp = MLPProjection(dim=dim, hidden_dim=dim * 4)
+        self.mlp = MLPProjection(dim=dim, hidden_dim=out_dim)
 
-    def forward(self, input_ids, attention_mask, pixel_values):
-        # Extract Text Embeddings from SIGLIP Text Encoder
-        text_outputs = self.siglip.text_model(
-            input_ids=input_ids, 
-            attention_mask=attention_mask
-        )
-        text_embeds = text_outputs.last_hidden_state # (batch, text_seq_len, dim)
-        
-        # Extract Patch Embeddings from SIGLIP Vision Encoder
-        vision_outputs = self.siglip.vision_model(pixel_values=pixel_values)
-        patch_embeds = vision_outputs.last_hidden_state # (batch, vision_patches, dim)
-
+    def forward(self, token_embeddings):
         # 2. Pass through 1 layer Gated Cross-Attention
-        x = self.big_perceiver(torch.cat((text_embeds, patch_embeds, patch_embeds), dim=1))
+        x = self.big_perceiver(token_embeddings)
         
         # 3. Pass through 1 layer Self Attention
         x_norm = self.ln_self(x)
@@ -146,7 +128,15 @@ class MultimodalFusionModel(nn.Module):
         return output_tokens
 
 
-# if __name__ == "__main__":
+if __name__ == "__main__":
+    embeddings = torch.randn(1, 260, 768)
+
+    model = MultimodalFusionModel(768, 2044, 256)
+    
+    output = model(embeddings)
+
+    print(output.shape)
+
 #     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
 #     # 1. Initialize Processor and Model

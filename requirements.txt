@@ -1,0 +1,13 @@
+torchvision
+ftfy
+tensorboard
+Jinja2
+peft==0.11.1
+sentencepiece
+qwen_vl_utils
+wandb
+datasets
+gradio
+matplotlib
+transformers==4.44.1
+accelerate==0.34.1
