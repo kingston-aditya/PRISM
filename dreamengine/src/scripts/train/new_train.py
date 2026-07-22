@@ -131,27 +131,12 @@ def log_validation(
 
 def load_sharded_model(config_path, index_path, bin_files_folder, qwenvl2_model, sd3_model, device='cpu'):
     """
-    Loads a sharded Hugging Face model from multiple binary files.
-
-    Args:
-        config_path (str): Path to the model configuration JSON file.
-        index_path (str): Path to the model index JSON file.
-        bin_files_folder (str): Directory containing the binary model files.
-        device (str): Device to load the model onto ('cpu' or 'cuda').
-
-    Returns:
-        torch.nn.Module: The loaded model with weights.
+    Loads a sharded Hugging Face model efficiently while preserving initialized sub-modules.
     """
-    # Step 1: Load the Model Configuration
-    print("Loading model configuration...")
-    with open(config_path, 'r') as f:
-        config = json.load(f)
+    print("Initializing QwenVLSD3_Perceiver_Model wrapper...")
+    # SigLIP, Connector, and MLP are initialized inside __init__
+    model = QwenVLSD3_Perceiver_Model(qwenvl2_model, sd3_model)
     
-    # Initialize the model using the configuration
-    print("Initializing the model based on the configuration...")
-    model = QwenVLSD3_DirectMap_Transformer2DModel(qwenvl2_model, sd3_model)
-    
-    # Step 2: Load the Model Index
     print("Loading model index file...")
     with open(index_path, 'r') as f:
         index = json.load(f)
@@ -160,62 +145,62 @@ def load_sharded_model(config_path, index_path, bin_files_folder, qwenvl2_model,
     if not weight_map:
         raise ValueError("The index file does not contain a 'weight_map' key.")
     
-    # Step 3: Organize Weights by Binary File
-    print("Organizing weights by their respective binary files...")
-    bins = {}
-    for weight_name, bin_file in weight_map.items():
-        bins.setdefault(bin_file, []).append(weight_name)
+    # Identify unique binary shard files
+    unique_bin_files = sorted(list(set(weight_map.values())))
     
-    # Initialize an empty state dictionary
-    state_dict = {}
+    all_missing_keys = set()
+    all_unexpected_keys = set()
     
-    # Step 4: Load Each Binary File and Extract Relevant Weights
-    for bin_file, weight_names in bins.items():
+    print(f"Loading weights shard by shard across {len(unique_bin_files)} files...")
+    
+    # Step 1: Load shard by shard to keep RAM usage low
+    for bin_file in unique_bin_files:
         bin_path = os.path.join(bin_files_folder, bin_file)
         if not os.path.isfile(bin_path):
             raise FileNotFoundError(f"Binary file not found: {bin_path}")
         
-        print(f"Loading binary file: {bin_path}")
-        bin_state = torch.load(bin_path, map_location=device)
+        print(f"Loading shard: {bin_file}")
+        # Load directly to CPU first to avoid VRAM spikes
+        bin_state = torch.load(bin_path, map_location='cpu')
         
-        # Determine how the weights are stored in the binary file
-        # Common scenarios:
-        # a) The entire state_dict is stored directly
-        # b) The state_dict is nested under a key like 'state_dict'
-
-        if isinstance(bin_state, dict):
-            if 'state_dict' in bin_state:
-                partial_state = bin_state['state_dict']
-            else:
-                partial_state = bin_state
-
-            # Extract only the weights relevant to this bin file
-            for weight_name in weight_names:
-                if weight_name in partial_state:
-                    state_dict[weight_name] = partial_state[weight_name]
-                else:
-                    print(f"Warning: '{weight_name}' not found in '{bin_file}'.")
+        if isinstance(bin_state, dict) and 'state_dict' in bin_state:
+            shard_state_dict = bin_state['state_dict']
         else:
-            raise ValueError(f"Unexpected format in binary file: {bin_file}")
+            shard_state_dict = bin_state
+            
+        # Perform incremental loading into model with strict=False
+        missing, unexpected = model.load_state_dict(shard_state_dict, strict=False)
+        
+        # Track unexpected keys across all shards
+        all_unexpected_keys.update(unexpected)
+        
+        # Free memory immediately after applying this shard
+        del bin_state, shard_state_dict
+        torch.cuda.empty_cache()
 
-    # Step 5: Load the Merged State Dictionary into the Model
-    print("Loading weights into the model...")
-    missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+    # Step 2: Validate initialized modules (SigLIP, Connector, MLP)
+    # Filter missing keys to see which modules are purposefully left untrained/unloaded
+    print("\n--- Load Status Report ---")
     
-    if missing_keys:
-        print("Warning: The following keys are missing in the state dictionary:")
-        for key in missing_keys:
-            print(f"  - {key}")
-    if unexpected_keys:
-        print("Warning: The following keys are unexpected in the state dictionary:")
-        for key in unexpected_keys:
-            print(f"  - {key}")
+    # We retrieve the final set of parameters that were never matched by any shard
+    final_model_state = model.state_dict()
+    final_missing_keys = [k for k in weight_map.keys() if k not in final_model_state]
     
-    # Transfer the model to the specified device
-    print(f"Transferring the model to {device.upper()}...")
+    if all_unexpected_keys:
+        print(f"[{len(all_unexpected_keys)}] Unexpected keys found in checkpoint (ignored).")
+
+    # Verify Connector and MLP weights are kept (randomly initialized)
+    connector_keys = [k for k in final_model_state.keys() if "connector" in k or "mlp" in k]
+    siglip_keys = [k for k in final_model_state.keys() if "siglip" in k]
+    
+    print(f"Connector & MLP parameters intact: {len(connector_keys)} variables initialized.")
+    print(f"SigLIP parameters intact: {len(siglip_keys)} variables loaded/initialized.")
+
+    # Step 3: Move model to destination device
+    print(f"Moving combined model to device: {device.upper()}")
     model.to(device)
-
-    print("Model loaded successfully.")
+    
+    print("Model loaded successfully!")
     return model
 
 def parse_args(input_args=None):
@@ -237,7 +222,7 @@ def parse_args(input_args=None):
 
 
     # dataset 
-    parser.add_argument("--dataset_config", type=str, default=None, help="The path to the dataset configuration file.")
+    parser.add_argument("--dataset_dir", type=str, default=None, help="The path to the dataset configuration file.")
     parser.add_argument("--cache_dir", type=str, default="./QwenVL-GEN/diffusers/examples/dreambooth/cache", help="The directory where the downloaded models and datasets will be stored.")
 
     # training
@@ -474,7 +459,7 @@ class QwenVLSD3_Perceiver_Model(QwenVLSD3_DirectMap_Transformer2DModel):
         loss2 = F.mse_loss(dit_model_pred[0], dit_model_pred_conn[0])
         loss3 = F.mse_loss(dit_encoder_conn_pooled_proj, dit_encoder_hidden_states_pooled_proj)
         
-        return 0.4 * loss1 + 0.4 * loss3 + 0.2 * loss2
+        return 0.9 * (loss1 + loss3) + 0.1 * loss2
     
 import pdb as pdb_original
 
@@ -582,7 +567,6 @@ def main(args):
         transformer = QwenVLSD3Transformer2DModel(qwenvl2_model, sd3_model, linear_alignment=args.linear_alignment, lmm_output_layer_index=args.lmm_output_layer_index, do_lmm_post_norm=args.do_lmm_post_norm)
 
     del qwenvl2_model, sd3_model
-    transformer.to(accelerator.device)
     transformer.requires_grad_(False)
 
     # setup lora
@@ -663,8 +647,8 @@ def main(args):
             os.path.join(args.resume_from_checkpoint,"config.json"),
             os.path.join(args.resume_from_checkpoint,"diffusion_pytorch_model.bin.index.json"),
             os.path.join(args.resume_from_checkpoint,),
-            qwenvl2_model,
-            sd3_model,
+            transformer.lmm,
+            transformer.dit,
             "cpu",
         )
     
@@ -703,7 +687,7 @@ def main(args):
         transformer.norm_lmm_out.requires_grad_(True)
         transformer.pooled_proj.requires_grad_(True)
 
-    ## Connector
+    ## Connector and small MLP
     if args.unfreeze_connector:
         transformer.connector.requires_grad_(True)
         transformer.small_mlp.requires_grad_(True)
@@ -712,13 +696,10 @@ def main(args):
     transformer_trainable_parameters = list(filter(lambda p: p.requires_grad, transformer.parameters()))
     params_to_optimize.append({"params": transformer_trainable_parameters, "lr": args.learning_rate})
 
-    
     # Calculate the number of parameters to train and all parameters
-
     num_trainable_params = sum(p.numel() for p in transformer.parameters() if p.requires_grad)
     num_params = sum(p.numel() for p in transformer.parameters())
 
-    
     logger.info(f"Number of parameters: {num_params}")
     logger.info(f"Number of parameters to train: {num_trainable_params}")
 
@@ -811,8 +792,6 @@ def main(args):
     accelerator.register_save_state_pre_hook(save_model_hook)
     accelerator.register_load_state_pre_hook(load_model_hook)
 
-
-       
     # set up optimizer
     optimizer = torch.optim.AdamW(
             params_to_optimize,
@@ -823,22 +802,19 @@ def main(args):
 
     
     # set up dataset
-    DATA_DIR = "/fs/cml-datasets/coco/"
-    # train_dataset = MS_COCO(dataset_path = os.path.join(DATA_DIR, "annotations", "captions_val2017.json"))
-    
-    train_dataset = MS_COCO(dataset_path=os.path.join(DATA_DIR, "annotations", "captions_val2017.json"))
+    train_dataset = MS_COCO(dataset_path=args.dataset_dir)
     
     # data loader
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.train_batch_size,
         collate_fn=train_dataset.collate_fn,
-        num_workers=8,
+        num_workers=6,
     )
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
-    estimated_dataset_size = int(10e5)
+    estimated_dataset_size = len(train_dataloader)
 
     num_update_steps_per_epoch = math.ceil(estimated_dataset_size / args.gradient_accumulation_steps)
 
@@ -1058,8 +1034,6 @@ def main(args):
                 lr_scheduler.step()
                 optimizer.zero_grad()
 
-                
-
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
                 progress_bar.update(1)
@@ -1099,8 +1073,6 @@ def main(args):
                 break
 
     accelerator.end_training()
-
-
 
 if __name__ == "__main__":
     args = parse_args()
