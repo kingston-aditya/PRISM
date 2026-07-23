@@ -107,6 +107,8 @@ class InterleavedDuplicateDataset(Dataset):
             ]
         )
 
+        # import pdb; pdb.set_trace()
+
         print("init successful")
 
     @staticmethod
@@ -121,7 +123,7 @@ class InterleavedDuplicateDataset(Dataset):
         example = {}
         # Load and process image
         try:
-            target_image = Image.open(self.dataset[index]["image_path"]) if self.dataset[index]["image_path"] is not None else self.dataset[index]["images"]
+            target_image = self.dataset[index]["image"]
             target_image = target_image.convert('RGB')
 
             if not target_image.mode == "RGB":
@@ -249,4 +251,4 @@ class IterableInterleavedDuplicateDataset(IterableDataset):
             "target_image": target_images,
             "obj_name_image": obj_name_images,
             "prompt": prompts
-        }
+            }

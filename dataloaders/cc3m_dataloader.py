@@ -12,7 +12,10 @@ import pdb
 from datasets import load_dataset, Dataset, IterableDataset
 
 import sys
-sys.path.insert(1, "/nfshomes/asarkar6/aditya/PRISM/")
+root = os.getcwd()
+while root != os.path.dirname(root) and not os.path.isdir(os.path.join(root, '.git')): root = os.path.dirname(root)
+sys.path.insert(1, root)
+
 from dataloaders.interleaved_dataset import InterleavedDuplicateDataset, IterableInterleavedDuplicateDataset
 
 class CC_3M(InterleavedDuplicateDataset):
@@ -33,20 +36,21 @@ class CC_3M(InterleavedDuplicateDataset):
         if "image_path" not in dataset.column_names:
             if "image" in dataset.column_names:
                 dataset = dataset.rename_column("image", "image_path")
-            elif "images" in dataset.column_names:
-                dataset = dataset.rename_column("images", "image_path")
+            elif "jpg" in dataset.column_names:
+                dataset = dataset.rename_column("jpg", "image")
                 
         # 2. Handle caption/prompt strings
         if "prompt" not in dataset.column_names:
             if "caption" in dataset.column_names:
                 dataset = dataset.rename_column("caption", "prompt")
-            elif "text" in dataset.column_names:
-                dataset = dataset.rename_column("text", "prompt")
+            elif "txt" in dataset.column_names:
+                dataset = dataset.rename_column("txt", "prompt")
                 
         return dataset
 
 if __name__ == "__main__":
-    dataset = CC_3M(dataset_path = os.path.join())
+    DATA_DIR = "/bucket/YamadaU/asarkar/CC3M/"
+    dataset = CC_3M(dataset_path = DATA_DIR)
     dataloader = DataLoader(dataset, batch_size=4, shuffle=False, collate_fn=dataset.collate_fn, num_workers=4)
     
     for i, batch in enumerate(dataloader):

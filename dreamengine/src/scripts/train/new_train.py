@@ -38,7 +38,10 @@ from torchvision.transforms.functional import crop
 from tqdm.auto import tqdm
 
 import sys
-sys.path.insert(1, "/nfshomes/asarkar6/aditya/PRISM/dreamengine/src/diffusers/src/")
+root = os.getcwd()
+while root != os.path.dirname(root) and not os.path.isdir(os.path.join(root, '.git')): root = os.path.dirname(root)
+
+sys.path.insert(1, os.path.join(root, "dreamengine/src/diffusers/src/"))
 import diffusers
 from diffusers.models.transformers.transformer_sd3 import QwenVLSD3Transformer2DModel, SD3Transformer2DModel, QwenVLSD3_DirectMap_Transformer2DModel
 from diffusers import (
@@ -57,8 +60,9 @@ from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_
 from diffusers.utils.torch_utils import is_compiled_module
 
 import sys
-sys.path.insert(1, "/nfshomes/asarkar6/aditya/PRISM/")
+sys.path.insert(1, root)
 from dataloaders.coco_dataloader import MS_COCO, StreamingMS_COCO
+from dataloaders.cc3m_dataloader import CC_3M
 
 from transformers import Qwen2VLForConditionalGeneration, SiglipProcessor, AutoProcessor
 from connector import MultimodalFusionModel, MLPProjection
@@ -76,6 +80,8 @@ import torch
 from torchvision import transforms
 import torch.nn.functional as F
 
+
+os.environ["WANDB_MODE"] = "disabled"
 
 def log_validation(
     pipeline,
@@ -197,7 +203,7 @@ def load_sharded_model(config_path, index_path, bin_files_folder, qwenvl2_model,
     print(f"SigLIP parameters intact: {len(siglip_keys)} variables loaded/initialized.")
 
     # Step 3: Move model to destination device
-    print(f"Moving combined model to device: {device.upper()}")
+    print(f"Moving combined model to device: {str(device).upper()}")
     model.to(device)
     
     print("Model loaded successfully!")
@@ -505,7 +511,7 @@ def main(args):
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
-        log_with=args.report_to,
+        log_with=None,
         project_config=accelerator_project_config,
         kwargs_handlers=[kwargs],
         dataloader_config=dataloader_config,
@@ -649,7 +655,7 @@ def main(args):
             os.path.join(args.resume_from_checkpoint,),
             transformer.lmm,
             transformer.dit,
-            "cpu",
+            accelerator.device,
         )
     
     params_to_optimize = []
@@ -802,7 +808,8 @@ def main(args):
 
     
     # set up dataset
-    train_dataset = MS_COCO(dataset_path=args.dataset_dir)
+    print("loading data now")
+    train_dataset = CC_3M(dataset_path=args.dataset_dir)
     
     # data loader
     train_dataloader = torch.utils.data.DataLoader(

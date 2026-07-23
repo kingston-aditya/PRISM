@@ -1,0 +1,18 @@
+loading dataset
+loading successful
+center_crop False
+init successful
+> /work/YamadaU/asarkar/PRISM/dataloaders/cc3m_dataloader.py(58)<module>()
+-> break
+(Pdb) dict_keys(['prompt', 'target_image', 'obj_name_image'])
+(Pdb) 
+Traceback (most recent call last):
+  File "/work/YamadaU/asarkar/PRISM/dataloaders/cc3m_dataloader.py", line 58, in <module>
+    break
+  File "/work/YamadaU/asarkar/PRISM/dataloaders/cc3m_dataloader.py", line 58, in <module>
+    break
+  File "/home/a/aditya-sarkar/.conda/envs/diffuser/lib/python3.10/bdb.py", line 90, in trace_dispatch
+    return self.dispatch_line(frame)
+  File "/home/a/aditya-sarkar/.conda/envs/diffuser/lib/python3.10/bdb.py", line 115, in dispatch_line
+    if self.quitting: raise BdbQuit
+bdb.BdbQuit
